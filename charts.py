@@ -17,8 +17,8 @@ def _pct_axis(fig):
     return fig
 
 
-def overall_daily_trend(df: pd.DataFrame):
-    grouped = daily_weighted_repair_ratios(df)
+def overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    grouped = daily_weighted_repair_ratios(df, baseline_df)
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(

@@ -67,8 +67,8 @@ def _style_axes(ax, title: str, y_percent: bool = False):
         ax.yaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
 
 
-def _overall_chart(df: pd.DataFrame):
-    grouped = daily_weighted_repair_ratios(df)
+def _overall_chart(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    grouped = daily_weighted_repair_ratios(df, baseline_df)
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=2.6, marker="o", label="Repair Ratio")
     ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=2.6, marker="o", label="Repair Ratio incl. Skelp")
@@ -117,7 +117,7 @@ def _amount_chart(df: pd.DataFrame):
     return _figure_to_image(fig)
 
 
-def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) -> bytes:
+def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], baseline_df: pd.DataFrame | None = None) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -161,10 +161,16 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
 
     total_length = daily["project_total_pipe_length"].sum()
     total_spiral_length = daily["repaired_spiral_length"].sum()
-    weighted_ratio = daily["total_repair_amount"].sum() / (total_spiral_length * METERS_PER_FOOT) if total_spiral_length else 0
+    baseline_repair = baseline_df["total_repair_amount"].sum() if baseline_df is not None and not baseline_df.empty else 0
+    baseline_repair_incl = baseline_df["total_repair_amount_incl_skelp"].sum() if baseline_df is not None and not baseline_df.empty else 0
+    baseline_spiral = baseline_df["repaired_spiral_length"].sum() if baseline_df is not None and not baseline_df.empty else 0
+    total_spiral_with_baseline = total_spiral_length + baseline_spiral
+    weighted_ratio = (
+        (daily["total_repair_amount"].sum() + baseline_repair) / (total_spiral_with_baseline * METERS_PER_FOOT)
+    ) if total_spiral_with_baseline else 0
     weighted_ratio_incl = (
-        daily["total_repair_amount_incl_skelp"].sum() / (total_spiral_length * METERS_PER_FOOT)
-    ) if total_spiral_length else 0
+        (daily["total_repair_amount_incl_skelp"].sum() + baseline_repair_incl) / (total_spiral_with_baseline * METERS_PER_FOOT)
+    ) if total_spiral_with_baseline else 0
 
     story = [
         Paragraph("Daily Repair Rate Trend Dashboard", title_style),
@@ -191,7 +197,7 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
     chart_grid = Table(
         [
             [
-                _overall_chart(df),
+                _overall_chart(df, baseline_df),
                 _worst_projects_chart(df, report_date),
             ],
             [
@@ -256,7 +262,7 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
     for _, row in dimension.iterrows():
         dim_rows.append([row["dimensions"], f"{int(row['projects'])}", _pct(row["avg_repair_ratio"]), _num(row["total_repair_amount"])])
 
-    trend = daily_weighted_repair_ratios(df).tail(10)
+    trend = daily_weighted_repair_ratios(df, baseline_df).tail(10)
     trend_rows = [["Date", "Weighted Ratio", "Weighted Ratio incl.", "Repair Amount", "Repair Amount incl."]]
     for _, row in trend.iterrows():
         trend_rows.append(

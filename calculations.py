@@ -22,7 +22,7 @@ def apply_meter_based_repair_ratios(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def daily_weighted_repair_ratios(df: pd.DataFrame) -> pd.DataFrame:
+def daily_weighted_repair_ratios(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None) -> pd.DataFrame:
     grouped = (
         df.groupby("date", as_index=False)
         .agg(
@@ -32,10 +32,18 @@ def daily_weighted_repair_ratios(df: pd.DataFrame) -> pd.DataFrame:
         )
         .sort_values("date")
     )
-    denominator_m = grouped["repaired_spiral_length"] * METERS_PER_FOOT
+    baseline_repair = 0.0
+    baseline_repair_incl = 0.0
+    baseline_spiral = 0.0
+    if baseline_df is not None and not baseline_df.empty:
+        baseline_repair = baseline_df["total_repair_amount"].sum()
+        baseline_repair_incl = baseline_df["total_repair_amount_incl_skelp"].sum()
+        baseline_spiral = baseline_df["repaired_spiral_length"].sum()
+
+    denominator_m = (grouped["repaired_spiral_length"] + baseline_spiral) * METERS_PER_FOOT
     denominator_m = denominator_m.where(denominator_m != 0)
-    grouped["weighted_repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
+    grouped["weighted_repair_ratio"] = ((grouped["total_repair_amount"] + baseline_repair) / denominator_m).fillna(0)
     grouped["weighted_repair_ratio_incl_skelp"] = (
-        grouped["total_repair_amount_incl_skelp"] / denominator_m
+        (grouped["total_repair_amount_incl_skelp"] + baseline_repair_incl) / denominator_m
     ).fillna(0)
     return grouped

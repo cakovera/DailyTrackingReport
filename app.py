@@ -4,8 +4,17 @@ import pandas as pd
 import streamlit as st
 
 import charts
+from baseline import baseline_template_csv, parse_historical_baseline_csv
 from calculations import apply_meter_based_repair_ratios
-from database import DB_PATH, get_backend_name, get_existing_keys, load_master_data, upsert_repair_rates
+from database import (
+    DB_PATH,
+    get_backend_name,
+    get_existing_keys,
+    load_historical_baselines,
+    load_master_data,
+    upsert_historical_baselines,
+    upsert_repair_rates,
+)
 from parser import parse_daily_repair_rate
 from pdf_report import build_a3_pdf_report
 from validators import mark_duplicate_counts
@@ -39,6 +48,15 @@ with st.sidebar:
         st.caption("Database: Supabase")
     else:
         st.caption(f"Database: SQLite ({DB_PATH})")
+    st.divider()
+    st.header("Historical Baseline")
+    st.download_button(
+        "Download baseline CSV template",
+        data=baseline_template_csv(),
+        file_name="historical_baseline_template.csv",
+        mime="text/csv",
+    )
+    baseline_upload = st.file_uploader("Historical baseline CSV", type=["csv"])
 
 if uploaded is not None:
     parsed_df, report = parse_daily_repair_rate(uploaded)
@@ -77,6 +95,23 @@ if uploaded is not None:
                 st.info("Supabase kullanıyorsanız RLS insert/update policy veya service-role key ayarı gerekir.")
                 st.code(str(exc), language="text")
 
+if baseline_upload is not None:
+    baseline_df, baseline_errors = parse_historical_baseline_csv(baseline_upload)
+    st.subheader("Historical Baseline Import")
+    if baseline_errors:
+        st.error("Historical baseline import iptal edildi.")
+        for error in baseline_errors:
+            st.error(error)
+    else:
+        st.dataframe(baseline_df, use_container_width=True)
+        if st.button("Confirm Historical Baseline Import", type="primary"):
+            try:
+                affected = upsert_historical_baselines(baseline_df)
+                st.success(f"Historical baseline import tamamlandi. {affected} satir islendi.")
+            except Exception as exc:
+                st.error("Historical baseline database yazma hatasi olustu.")
+                st.code(str(exc), language="text")
+
 if st.session_state.last_import_summary:
     summary = st.session_state.last_import_summary
     st.success(
@@ -89,6 +124,7 @@ st.divider()
 
 try:
     master_df = load_master_data()
+    baseline_master_df = load_historical_baselines()
 except Exception as exc:
     st.error("Database bağlantısı kurulamadı veya Supabase tablosu hazır değil.")
     st.info("Supabase kullanıyorsanız önce SQL Editor içinde supabase_setup.sql dosyasındaki script'i çalıştırın.")
@@ -113,7 +149,7 @@ selected_date = st.selectbox("Date", available_dates, index=len(available_dates)
 
 if st.button("Generate A3 PDF Report"):
     with st.spinner("A3 PDF report hazırlanıyor..."):
-        st.session_state.pdf_report = build_a3_pdf_report(filtered, selected_date, selected_status)
+        st.session_state.pdf_report = build_a3_pdf_report(filtered, selected_date, selected_status, baseline_master_df)
         st.session_state.pdf_report_name = f"daily_repair_rate_report_{selected_date}.pdf"
 
 if st.session_state.pdf_report:
@@ -124,7 +160,11 @@ if st.session_state.pdf_report:
         mime="application/pdf",
     )
 
-st.plotly_chart(charts.overall_daily_trend(filtered), use_container_width=True)
+st.plotly_chart(charts.overall_daily_trend(filtered, baseline_master_df), use_container_width=True)
+if baseline_master_df.empty:
+    st.caption("Historical baseline is not loaded.")
+else:
+    st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_master_df)} projects")
 
 left, right = st.columns(2)
 with left:
