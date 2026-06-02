@@ -3,5 +3,5 @@ pandas>=2.2
 openpyxl>=3.1
 plotly>=5.22
 reportlab>=4.2
-kaleido>=0.2.1
+matplotlib>=3.9
 supabase>=2.10

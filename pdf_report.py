@@ -2,16 +2,17 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import pandas as pd
-import plotly.io as pio
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A3, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
-import charts
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 def _pct(value: float) -> str:
@@ -45,19 +46,82 @@ def _table(data, col_widths=None, font_size=8):
     return table
 
 
-def _chart_image(fig, width_px=900, height_px=320, display_width=19.8 * cm, display_height=7.1 * cm):
-    fig.update_layout(
-        template="plotly_white",
-        paper_bgcolor="white",
-        plot_bgcolor="#f8fafc",
-        margin={"l": 55, "r": 25, "t": 55, "b": 55},
-        font={"size": 14, "color": "#111827"},
-        legend={"orientation": "h", "y": -0.22},
+def _figure_to_image(fig, display_width=19.8 * cm, display_height=7.1 * cm):
+    png_buffer = BytesIO()
+    fig.savefig(png_buffer, format="png", dpi=140, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    png_buffer.seek(0)
+    return Image(png_buffer, width=display_width, height=display_height)
+
+
+def _style_axes(ax, title: str, y_percent: bool = False):
+    ax.set_title(title, fontsize=12, fontweight="bold", color="#111827", pad=10)
+    ax.set_facecolor("#f8fafc")
+    ax.grid(True, axis="y", color="#dbe3ef", linewidth=0.8)
+    ax.tick_params(axis="both", labelsize=8, colors="#111827")
+    for spine in ax.spines.values():
+        spine.set_color("#cbd5e1")
+    if y_percent:
+        ax.yaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
+
+
+def _overall_chart(df: pd.DataFrame):
+    grouped = (
+        df.groupby("date", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            project_total_pipe_length=("project_total_pipe_length", "sum"),
+        )
+        .sort_values("date")
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#dbe3ef", zeroline=False, tickfont={"color": "#111827", "size": 12})
-    fig.update_yaxes(showgrid=True, gridcolor="#dbe3ef", zeroline=False, tickfont={"color": "#111827", "size": 12})
-    png = pio.to_image(fig, format="png", width=width_px, height=height_px, scale=1)
-    return Image(BytesIO(png), width=display_width, height=display_height)
+    grouped["weighted_repair_ratio"] = grouped["total_repair_amount"] / grouped["project_total_pipe_length"]
+    grouped["weighted_repair_ratio_incl_skelp"] = grouped["total_repair_amount_incl_skelp"] / grouped["project_total_pipe_length"]
+    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=2.6, marker="o", label="Repair Ratio")
+    ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=2.6, marker="o", label="Repair Ratio incl. Skelp")
+    _style_axes(ax, "Overall Daily Repair Ratio Trend", y_percent=True)
+    ax.legend(fontsize=7, loc="best")
+    fig.autofmt_xdate(rotation=20)
+    return _figure_to_image(fig)
+
+
+def _worst_projects_chart(df: pd.DataFrame, selected_date):
+    daily = df[df["date"].dt.date == selected_date].nlargest(10, "repair_ratio").sort_values("repair_ratio")
+    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    bar_colors = ["#16a34a" if status == "Completed" else "#f97316" for status in daily["project_status"]]
+    ax.barh(daily["project_no"], daily["repair_ratio"], color=bar_colors)
+    ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
+    _style_axes(ax, "Worst Projects Today")
+    ax.tick_params(axis="y", labelsize=7)
+    return _figure_to_image(fig)
+
+
+def _dimension_chart(daily: pd.DataFrame):
+    grouped = daily.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False).head(12)
+    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    ax.bar(grouped["dimensions"], grouped["repair_ratio"], color="#0891b2")
+    _style_axes(ax, "Dimension Analysis", y_percent=True)
+    ax.tick_params(axis="x", labelrotation=35, labelsize=7)
+    return _figure_to_image(fig)
+
+
+def _amount_chart(df: pd.DataFrame):
+    grouped = (
+        df.groupby("date", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+        )
+        .sort_values("date")
+    )
+    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    ax.plot(grouped["date"], grouped["total_repair_amount"], color="#7c3aed", linewidth=2.6, marker="o", label="Total Repair Amount")
+    ax.plot(grouped["date"], grouped["total_repair_amount_incl_skelp"], color="#ea580c", linewidth=2.6, marker="o", label="Total Repair Amount incl. Skelp")
+    _style_axes(ax, "Repair Amount Trend")
+    ax.legend(fontsize=7, loc="best")
+    fig.autofmt_xdate(rotation=20)
+    return _figure_to_image(fig)
 
 
 def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) -> bytes:
@@ -131,12 +195,12 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
     chart_grid = Table(
         [
             [
-                _chart_image(charts.overall_daily_trend(df)),
-                _chart_image(charts.worst_projects_today(df, report_date)),
+                _overall_chart(df),
+                _worst_projects_chart(df, report_date),
             ],
             [
-                _chart_image(charts.dimension_analysis(daily)),
-                _chart_image(charts.repair_amount_trend(df)),
+                _dimension_chart(daily),
+                _amount_chart(df),
             ],
         ],
         colWidths=[20.4 * cm, 20.4 * cm],
