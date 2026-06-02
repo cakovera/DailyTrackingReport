@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 
 import charts
-from baseline import baseline_template_csv, parse_historical_baseline_csv
 from calculations import apply_meter_based_repair_ratios
 from database import (
     DB_PATH,
@@ -50,6 +49,8 @@ with st.sidebar:
         st.caption(f"Database: SQLite ({DB_PATH})")
     st.divider()
     st.header("Historical Baseline")
+    from baseline import baseline_template_csv
+
     st.download_button(
         "Download baseline CSV template",
         data=baseline_template_csv(),
@@ -96,6 +97,8 @@ if uploaded is not None:
                 st.code(str(exc), language="text")
 
 if baseline_upload is not None:
+    from baseline import parse_historical_baseline_csv
+
     baseline_df, baseline_errors = parse_historical_baseline_csv(baseline_upload)
     st.subheader("Historical Baseline Import")
     if baseline_errors:
