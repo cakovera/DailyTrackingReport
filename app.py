@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+from calculations import apply_meter_based_repair_ratios
 from database import DB_PATH, get_backend_name, get_existing_keys, load_master_data, upsert_repair_rates
 from parser import parse_daily_repair_rate
 from pdf_report import build_a3_pdf_report
@@ -101,6 +102,7 @@ status_options = sorted(master_df["project_status"].dropna().unique())
 default_status = [s for s in ["Completed", "In Progress"] if s in status_options] or status_options
 selected_status = st.multiselect("Status Filter", status_options, default=default_status)
 filtered = master_df[master_df["project_status"].isin(selected_status)] if selected_status else master_df
+filtered = apply_meter_based_repair_ratios(filtered)
 
 if filtered.empty:
     st.warning("Seçili filtrelerle veri bulunamadı.")

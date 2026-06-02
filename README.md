@@ -112,11 +112,11 @@ date + project_no + dimensions
 
 ## Dashboard Calculations
 
-Overall repair ratio is weighted, not a simple average:
+Overall repair ratio is weighted, not a simple average. Repair amount is stored in meters and repaired spiral length is stored in feet, so repaired spiral length is converted to meters first:
 
 ```text
-weighted_repair_ratio = sum(Total Repair Amount) / sum(Project Total Pipe Length)
-weighted_repair_ratio_incl_skelp = sum(Total Repair Amount incl. Skelp) / sum(Project Total Pipe Length)
+weighted_repair_ratio = sum(Total Repair Amount) / sum(Repaired Spiral Length * 0.3048)
+weighted_repair_ratio_incl_skelp = sum(Total Repair Amount incl. Skelp) / sum(Repaired Spiral Length * 0.3048)
 ```
 
 Repair ratio values are stored as decimals, for example `0.0402`, and displayed as percentages, for example `4.02%`.

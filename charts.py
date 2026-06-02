@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from calculations import apply_meter_based_repair_ratios, daily_weighted_repair_ratios
 
 STATUS_COLORS = {
     "Completed": "#16a34a",
@@ -17,19 +18,7 @@ def _pct_axis(fig):
 
 
 def overall_daily_trend(df: pd.DataFrame):
-    grouped = (
-        df.groupby("date", as_index=False)
-        .agg(
-            total_repair_amount=("total_repair_amount", "sum"),
-            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
-            project_total_pipe_length=("project_total_pipe_length", "sum"),
-        )
-        .sort_values("date")
-    )
-    grouped["weighted_repair_ratio"] = grouped["total_repair_amount"] / grouped["project_total_pipe_length"]
-    grouped["weighted_repair_ratio_incl_skelp"] = (
-        grouped["total_repair_amount_incl_skelp"] / grouped["project_total_pipe_length"]
-    )
+    grouped = daily_weighted_repair_ratios(df)
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -57,7 +46,7 @@ def overall_daily_trend(df: pd.DataFrame):
 
 
 def worst_projects_today(df: pd.DataFrame, selected_date):
-    daily = df[df["date"].dt.date == selected_date].nlargest(10, "repair_ratio")
+    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio")
     fig = px.bar(
         daily,
         x="repair_ratio",
@@ -73,7 +62,7 @@ def worst_projects_today(df: pd.DataFrame, selected_date):
 
 
 def project_trend(df: pd.DataFrame, project_no: str):
-    data = df[df["project_no"] == project_no].sort_values("date")
+    data = apply_meter_based_repair_ratios(df[df["project_no"] == project_no]).sort_values("date")
     fig = px.line(
         data,
         x="date",
@@ -89,7 +78,8 @@ def project_trend(df: pd.DataFrame, project_no: str):
 
 
 def dimension_analysis(df: pd.DataFrame):
-    grouped = df.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False)
+    data = apply_meter_based_repair_ratios(df)
+    grouped = data.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False)
     fig = px.bar(grouped, x="dimensions", y="repair_ratio", title="Dimension Analysis", color="repair_ratio", color_continuous_scale="Turbo")
     fig.update_layout(xaxis_title="Dimension", yaxis_title="Average Repair Ratio")
     fig.update_yaxes(tickformat=".2%")

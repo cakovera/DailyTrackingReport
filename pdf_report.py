@@ -14,6 +14,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from calculations import METERS_PER_FOOT, apply_meter_based_repair_ratios, daily_weighted_repair_ratios
+
 
 def _pct(value: float) -> str:
     return f"{value:.2%}" if pd.notna(value) else ""
@@ -66,17 +68,7 @@ def _style_axes(ax, title: str, y_percent: bool = False):
 
 
 def _overall_chart(df: pd.DataFrame):
-    grouped = (
-        df.groupby("date", as_index=False)
-        .agg(
-            total_repair_amount=("total_repair_amount", "sum"),
-            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
-            project_total_pipe_length=("project_total_pipe_length", "sum"),
-        )
-        .sort_values("date")
-    )
-    grouped["weighted_repair_ratio"] = grouped["total_repair_amount"] / grouped["project_total_pipe_length"]
-    grouped["weighted_repair_ratio_incl_skelp"] = grouped["total_repair_amount_incl_skelp"] / grouped["project_total_pipe_length"]
+    grouped = daily_weighted_repair_ratios(df)
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=2.6, marker="o", label="Repair Ratio")
     ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=2.6, marker="o", label="Repair Ratio incl. Skelp")
@@ -87,7 +79,7 @@ def _overall_chart(df: pd.DataFrame):
 
 
 def _worst_projects_chart(df: pd.DataFrame, selected_date):
-    daily = df[df["date"].dt.date == selected_date].nlargest(10, "repair_ratio").sort_values("repair_ratio")
+    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").sort_values("repair_ratio")
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     bar_colors = ["#16a34a" if status == "Completed" else "#f97316" for status in daily["project_status"]]
     ax.barh(daily["project_no"], daily["repair_ratio"], color=bar_colors)
@@ -98,6 +90,7 @@ def _worst_projects_chart(df: pd.DataFrame, selected_date):
 
 
 def _dimension_chart(daily: pd.DataFrame):
+    daily = apply_meter_based_repair_ratios(daily)
     grouped = daily.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False).head(12)
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     ax.bar(grouped["dimensions"], grouped["repair_ratio"], color="#0891b2")
@@ -164,11 +157,14 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
     )
 
     report_date = pd.to_datetime(selected_date).date()
-    daily = df[df["date"].dt.date == report_date].copy()
+    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == report_date])
 
     total_length = daily["project_total_pipe_length"].sum()
-    weighted_ratio = daily["total_repair_amount"].sum() / total_length if total_length else 0
-    weighted_ratio_incl = daily["total_repair_amount_incl_skelp"].sum() / total_length if total_length else 0
+    total_spiral_length = daily["repaired_spiral_length"].sum()
+    weighted_ratio = daily["total_repair_amount"].sum() / (total_spiral_length * METERS_PER_FOOT) if total_spiral_length else 0
+    weighted_ratio_incl = (
+        daily["total_repair_amount_incl_skelp"].sum() / (total_spiral_length * METERS_PER_FOOT)
+    ) if total_spiral_length else 0
 
     story = [
         Paragraph("Daily Repair Rate Trend Dashboard", title_style),
@@ -260,18 +256,7 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str]) ->
     for _, row in dimension.iterrows():
         dim_rows.append([row["dimensions"], f"{int(row['projects'])}", _pct(row["avg_repair_ratio"]), _num(row["total_repair_amount"])])
 
-    trend = (
-        df.groupby("date", as_index=False)
-        .agg(
-            total_repair_amount=("total_repair_amount", "sum"),
-            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
-            project_total_pipe_length=("project_total_pipe_length", "sum"),
-        )
-        .sort_values("date")
-        .tail(10)
-    )
-    trend["weighted_repair_ratio"] = trend["total_repair_amount"] / trend["project_total_pipe_length"]
-    trend["weighted_repair_ratio_incl_skelp"] = trend["total_repair_amount_incl_skelp"] / trend["project_total_pipe_length"]
+    trend = daily_weighted_repair_ratios(df).tail(10)
     trend_rows = [["Date", "Weighted Ratio", "Weighted Ratio incl.", "Repair Amount", "Repair Amount incl."]]
     for _, row in trend.iterrows():
         trend_rows.append(
