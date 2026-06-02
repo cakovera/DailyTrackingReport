@@ -92,7 +92,9 @@ def dimension_analysis(df: pd.DataFrame):
     grouped = df.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False)
     fig = px.bar(grouped, x="dimensions", y="repair_ratio", title="Dimension Analysis", color="repair_ratio", color_continuous_scale="Turbo")
     fig.update_layout(xaxis_title="Dimension", yaxis_title="Average Repair Ratio")
-    return _pct_axis(fig)
+    fig.update_yaxes(tickformat=".2%")
+    fig.update_traces(hovertemplate="Dimension: %{x}<br>Average Repair Ratio: %{y:.2%}<extra></extra>")
+    return fig
 
 
 def repair_amount_trend(df: pd.DataFrame):
