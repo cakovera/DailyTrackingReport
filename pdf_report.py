@@ -14,7 +14,14 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from calculations import METERS_PER_FOOT, apply_meter_based_repair_ratios, daily_weighted_repair_ratios
+from calculations import (
+    METERS_PER_FOOT,
+    amount_in_display_unit,
+    apply_meter_based_repair_ratios,
+    daily_weighted_repair_ratios,
+    length_in_display_unit,
+    unit_label,
+)
 
 
 def _pct(value: float) -> str:
@@ -137,7 +144,7 @@ def _dimension_chart(daily: pd.DataFrame):
     return _figure_to_image(fig)
 
 
-def _amount_chart(df: pd.DataFrame):
+def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     grouped = (
         df.groupby("date", as_index=False)
         .agg(
@@ -146,20 +153,39 @@ def _amount_chart(df: pd.DataFrame):
         )
         .sort_values("date")
     )
+    unit = unit_label(display_unit)
+    grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
+    grouped["total_repair_amount_incl_skelp_display"] = amount_in_display_unit(
+        grouped["total_repair_amount_incl_skelp"], display_unit
+    )
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
-    ax.plot(grouped["date"], grouped["total_repair_amount"], color="#7c3aed", linewidth=2.6, marker="o", label="Total Repair Amount")
-    ax.plot(grouped["date"], grouped["total_repair_amount_incl_skelp"], color="#ea580c", linewidth=2.6, marker="o", label="Total Repair Amount incl. Skelp")
-    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount"], _short_num, "#7c3aed", 8)
-    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_incl_skelp"], _short_num, "#ea580c", -14)
-    max_value = grouped[["total_repair_amount", "total_repair_amount_incl_skelp"]].max().max()
+    ax.plot(grouped["date"], grouped["total_repair_amount_display"], color="#7c3aed", linewidth=2.6, marker="o", label="Total Repair Amount")
+    ax.plot(
+        grouped["date"],
+        grouped["total_repair_amount_incl_skelp_display"],
+        color="#ea580c",
+        linewidth=2.6,
+        marker="o",
+        label="Total Repair Amount incl. Skelp",
+    )
+    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_display"], _short_num, "#7c3aed", 8)
+    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_incl_skelp_display"], _short_num, "#ea580c", -14)
+    max_value = grouped[["total_repair_amount_display", "total_repair_amount_incl_skelp_display"]].max().max()
     ax.set_ylim(0, max_value * 1.28 if max_value else 1)
-    _style_axes(ax, "Repair Amount Trend")
+    _style_axes(ax, f"Repair Amount Trend ({unit})")
+    ax.set_ylabel(f"Total Repair Amount ({unit})", fontsize=8)
     ax.legend(fontsize=7, loc="best")
     fig.autofmt_xdate(rotation=20)
     return _figure_to_image(fig)
 
 
-def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], baseline_df: pd.DataFrame | None = None) -> bytes:
+def build_a3_pdf_report(
+    df: pd.DataFrame,
+    selected_date,
+    statuses: list[str],
+    baseline_df: pd.DataFrame | None = None,
+    display_unit: str = "m",
+) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -200,6 +226,7 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], ba
 
     report_date = pd.to_datetime(selected_date).date()
     daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == report_date])
+    unit = unit_label(display_unit)
 
     total_length = daily["project_total_pipe_length"].sum()
     total_spiral_length = daily["repaired_spiral_length"].sum()
@@ -217,19 +244,26 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], ba
     story = [
         Paragraph("Daily Repair Rate Trend Dashboard", title_style),
         Paragraph(
-            f"Report date: {report_date} &nbsp;&nbsp;|&nbsp;&nbsp; Status filter: {', '.join(statuses) if statuses else 'All'}",
+            f"Report date: {report_date} &nbsp;&nbsp;|&nbsp;&nbsp; Display unit: {unit} &nbsp;&nbsp;|&nbsp;&nbsp; Status filter: {', '.join(statuses) if statuses else 'All'}",
             right_style,
         ),
         Spacer(1, 0.25 * cm),
     ]
 
     kpis = [
-        ["Projects", "Total Pipe Length", "Total Repair Amount", "Repair Amount incl. Skelp", "Weighted Repair Ratio", "Weighted Ratio incl. Skelp"],
+        [
+            "Projects",
+            f"Total Pipe Length ({unit})",
+            f"Total Repair Amount ({unit})",
+            f"Repair Amount incl. Skelp ({unit})",
+            "Weighted Repair Ratio",
+            "Weighted Ratio incl. Skelp",
+        ],
         [
             f"{len(daily):,}",
-            _num(daily["project_total_pipe_length"].sum()),
-            _num(daily["total_repair_amount"].sum()),
-            _num(daily["total_repair_amount_incl_skelp"].sum()),
+            _num(length_in_display_unit(daily["project_total_pipe_length"].sum(), display_unit)),
+            _num(amount_in_display_unit(daily["total_repair_amount"].sum(), display_unit)),
+            _num(amount_in_display_unit(daily["total_repair_amount_incl_skelp"].sum(), display_unit)),
             _pct(weighted_ratio),
             _pct(weighted_ratio_incl),
         ],
@@ -244,7 +278,7 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], ba
             ],
             [
                 _dimension_chart(daily),
-                _amount_chart(df),
+                _amount_chart(df, display_unit),
             ],
         ],
         colWidths=[20.4 * cm, 20.4 * cm],
@@ -277,16 +311,16 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], ba
             "repair_ratio_incl_skelp",
         ]
     ]
-    worst_rows = [["Project No.", "Dimension", "Qty", "Pipe Length", "Repair Amt", "Repair Amt incl.", "Status", "Ratio", "Ratio incl."]]
+    worst_rows = [["Project No.", "Dimension", "Qty", f"Pipe Length ({unit})", f"Repair Amt ({unit})", f"Repair Amt incl. ({unit})", "Status", "Ratio", "Ratio incl."]]
     for _, row in worst.iterrows():
         worst_rows.append(
             [
                 row["project_no"],
                 row["dimensions"],
                 _num(row["qty"]),
-                _num(row["project_total_pipe_length"]),
-                _num(row["total_repair_amount"]),
-                _num(row["total_repair_amount_incl_skelp"]),
+                _num(length_in_display_unit(row["project_total_pipe_length"], display_unit)),
+                _num(amount_in_display_unit(row["total_repair_amount"], display_unit)),
+                _num(amount_in_display_unit(row["total_repair_amount_incl_skelp"], display_unit)),
                 row["project_status"],
                 _pct(row["repair_ratio"]),
                 _pct(row["repair_ratio_incl_skelp"]),
@@ -300,20 +334,27 @@ def build_a3_pdf_report(df: pd.DataFrame, selected_date, statuses: list[str], ba
         .sort_values("avg_repair_ratio", ascending=False)
         .head(12)
     )
-    dim_rows = [["Dimension", "Projects", "Average Repair Ratio", "Total Repair Amount"]]
+    dim_rows = [["Dimension", "Projects", "Average Repair Ratio", f"Total Repair Amount ({unit})"]]
     for _, row in dimension.iterrows():
-        dim_rows.append([row["dimensions"], f"{int(row['projects'])}", _pct(row["avg_repair_ratio"]), _num(row["total_repair_amount"])])
+        dim_rows.append(
+            [
+                row["dimensions"],
+                f"{int(row['projects'])}",
+                _pct(row["avg_repair_ratio"]),
+                _num(amount_in_display_unit(row["total_repair_amount"], display_unit)),
+            ]
+        )
 
     trend = daily_weighted_repair_ratios(df, baseline_df).tail(10)
-    trend_rows = [["Date", "Weighted Ratio", "Weighted Ratio incl.", "Repair Amount", "Repair Amount incl."]]
+    trend_rows = [["Date", "Weighted Ratio", "Weighted Ratio incl.", f"Repair Amount ({unit})", f"Repair Amount incl. ({unit})"]]
     for _, row in trend.iterrows():
         trend_rows.append(
             [
                 row["date"].strftime("%Y-%m-%d"),
                 _pct(row["weighted_repair_ratio"]),
                 _pct(row["weighted_repair_ratio_incl_skelp"]),
-                _num(row["total_repair_amount"]),
-                _num(row["total_repair_amount_incl_skelp"]),
+                _num(amount_in_display_unit(row["total_repair_amount"], display_unit)),
+                _num(amount_in_display_unit(row["total_repair_amount_incl_skelp"], display_unit)),
             ]
         )
 

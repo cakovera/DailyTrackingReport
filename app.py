@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
-from calculations import apply_meter_based_repair_ratios
+from calculations import amount_in_display_unit, apply_meter_based_repair_ratios, length_in_display_unit, unit_label
 from database import (
     DB_PATH,
     get_backend_name,
@@ -30,10 +30,19 @@ if "pdf_report_name" not in st.session_state:
     st.session_state.pdf_report_name = None
 
 
-def format_preview(df: pd.DataFrame) -> pd.DataFrame:
+def format_preview(df: pd.DataFrame, display_unit: str = "m") -> pd.DataFrame:
     out = df.drop(columns=["excel_row"], errors="ignore").copy()
     if "date" in out.columns:
         out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
+    unit = unit_label(display_unit)
+    for col in ["project_total_pipe_length", "repaired_pipes_total_length", "repaired_spiral_length"]:
+        if col in out.columns:
+            out[col] = length_in_display_unit(out[col], display_unit)
+            out = out.rename(columns={col: f"{col}_{unit}"})
+    for col in ["total_repair_amount", "total_repair_amount_incl_skelp"]:
+        if col in out.columns:
+            out[col] = amount_in_display_unit(out[col], display_unit)
+            out = out.rename(columns={col: f"{col}_{unit}"})
     for col in ["repair_ratio", "repair_ratio_incl_skelp"]:
         out[col] = out[col].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
     return out
@@ -47,6 +56,15 @@ with st.sidebar:
         st.caption("Database: Supabase")
     else:
         st.caption(f"Database: SQLite ({DB_PATH})")
+    st.divider()
+    st.header("Display")
+    display_unit = st.radio(
+        "Unit",
+        ["m", "ft"],
+        index=0,
+        format_func=lambda value: "Meter (m)" if value == "m" else "Feet (ft)",
+        horizontal=True,
+    )
     st.divider()
     st.header("Historical Baseline")
     from baseline import baseline_template_csv
@@ -80,7 +98,7 @@ if uploaded is not None:
             st.error(error)
     else:
         st.success("Validation başarılı. Import için onay bekleniyor.")
-        st.dataframe(format_preview(parsed_df), use_container_width=True)
+        st.dataframe(format_preview(parsed_df, display_unit), use_container_width=True)
         if st.button("Confirm Import", type="primary"):
             try:
                 affected = upsert_repair_rates(parsed_df)
@@ -152,7 +170,7 @@ selected_date = st.selectbox("Date", available_dates, index=len(available_dates)
 
 if st.button("Generate A3 PDF Report"):
     with st.spinner("A3 PDF report hazırlanıyor..."):
-        st.session_state.pdf_report = build_a3_pdf_report(filtered, selected_date, selected_status, baseline_master_df)
+        st.session_state.pdf_report = build_a3_pdf_report(filtered, selected_date, selected_status, baseline_master_df, display_unit)
         st.session_state.pdf_report_name = f"daily_repair_rate_report_{selected_date}.pdf"
 
 if st.session_state.pdf_report:
@@ -181,7 +199,7 @@ left, right = st.columns(2)
 with left:
     st.plotly_chart(charts.dimension_analysis(filtered), use_container_width=True)
 with right:
-    st.plotly_chart(charts.repair_amount_trend(filtered), use_container_width=True)
+    st.plotly_chart(charts.repair_amount_trend(filtered, display_unit), use_container_width=True)
 
 with st.expander("Master data"):
-    st.dataframe(format_preview(filtered), use_container_width=True)
+    st.dataframe(format_preview(filtered, display_unit), use_container_width=True)

@@ -4,6 +4,23 @@ import pandas as pd
 
 
 METERS_PER_FOOT = 0.3048
+FEET_PER_METER = 1 / METERS_PER_FOOT
+
+
+def unit_label(display_unit: str) -> str:
+    return "ft" if display_unit == "ft" else "m"
+
+
+def amount_in_display_unit(values, display_unit: str):
+    if display_unit == "ft":
+        return values * FEET_PER_METER
+    return values
+
+
+def length_in_display_unit(values, display_unit: str):
+    if display_unit == "m":
+        return values * METERS_PER_FOOT
+    return values
 
 
 def apply_meter_based_repair_ratios(df: pd.DataFrame) -> pd.DataFrame:

@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from calculations import apply_meter_based_repair_ratios, daily_weighted_repair_ratios
+from calculations import amount_in_display_unit, apply_meter_based_repair_ratios, daily_weighted_repair_ratios, unit_label
 
 STATUS_COLORS = {
     "Completed": "#16a34a",
@@ -87,7 +87,7 @@ def dimension_analysis(df: pd.DataFrame):
     return fig
 
 
-def repair_amount_trend(df: pd.DataFrame):
+def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     grouped = (
         df.groupby("date", as_index=False)
         .agg(
@@ -96,15 +96,32 @@ def repair_amount_trend(df: pd.DataFrame):
         )
         .sort_values("date")
     )
+    unit = unit_label(display_unit)
+    grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
+    grouped["total_repair_amount_incl_skelp_display"] = amount_in_display_unit(
+        grouped["total_repair_amount_incl_skelp"], display_unit
+    )
     fig = px.line(
         grouped,
         x="date",
-        y=["total_repair_amount", "total_repair_amount_incl_skelp"],
+        y=["total_repair_amount_display", "total_repair_amount_incl_skelp_display"],
         markers=True,
-        title="Repair Amount Trend",
+        title=f"Repair Amount Trend ({unit})",
         color_discrete_sequence=["#7c3aed", "#ea580c"],
     )
     fig.update_traces(line={"width": 4}, marker={"size": 9})
-    fig.update_layout(xaxis_title="Date", yaxis_title="Total Repair Amount")
+    fig.update_layout(
+        xaxis_title="Date",
+        yaxis_title=f"Total Repair Amount ({unit})",
+        legend_title_text="",
+    )
+    fig.for_each_trace(
+        lambda trace: trace.update(
+            name={
+                "total_repair_amount_display": "Total Repair Amount",
+                "total_repair_amount_incl_skelp_display": "Total Repair Amount incl. Skelp",
+            }.get(trace.name, trace.name)
+        )
+    )
     fig.update_xaxes(tickformat="%Y-%m-%d")
     return fig
