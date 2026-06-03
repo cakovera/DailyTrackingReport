@@ -25,6 +25,34 @@ def _num(value: float) -> str:
     return f"{value:,.2f}" if pd.notna(value) else ""
 
 
+def _short_num(value: float) -> str:
+    if not pd.notna(value):
+        return ""
+    if abs(value) >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if abs(value) >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:.1f}"
+
+
+def _add_point_labels(ax, x_values, y_values, formatter, color: str, y_offset: int) -> None:
+    for x_value, y_value in zip(x_values, y_values):
+        if not pd.notna(y_value):
+            continue
+        ax.annotate(
+            formatter(y_value),
+            xy=(x_value, y_value),
+            xytext=(0, y_offset),
+            textcoords="offset points",
+            ha="center",
+            va="bottom" if y_offset >= 0 else "top",
+            fontsize=6.5,
+            color=color,
+            fontweight="bold",
+            bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": color, "lw": 0.4, "alpha": 0.82},
+        )
+
+
 def _table(data, col_widths=None, font_size=8):
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(
@@ -72,6 +100,10 @@ def _overall_chart(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=2.6, marker="o", label="Repair Ratio")
     ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=2.6, marker="o", label="Repair Ratio incl. Skelp")
+    _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], _pct, "#2563eb", 8)
+    _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], _pct, "#dc2626", -14)
+    max_value = grouped[["weighted_repair_ratio", "weighted_repair_ratio_incl_skelp"]].max().max()
+    ax.set_ylim(0, max_value * 1.28 if max_value else 1)
     _style_axes(ax, "Overall Daily Repair Ratio Trend", y_percent=True)
     ax.legend(fontsize=7, loc="best")
     fig.autofmt_xdate(rotation=20)
@@ -82,7 +114,10 @@ def _worst_projects_chart(df: pd.DataFrame, selected_date):
     daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").sort_values("repair_ratio")
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     bar_colors = ["#16a34a" if status == "Completed" else "#f97316" for status in daily["project_status"]]
-    ax.barh(daily["project_no"], daily["repair_ratio"], color=bar_colors)
+    bars = ax.barh(daily["project_no"], daily["repair_ratio"], color=bar_colors)
+    ax.bar_label(bars, labels=[_pct(value) for value in daily["repair_ratio"]], padding=3, fontsize=7, fontweight="bold")
+    max_value = daily["repair_ratio"].max()
+    ax.set_xlim(0, max_value * 1.22 if pd.notna(max_value) and max_value else 1)
     ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
     _style_axes(ax, "Worst Projects Today")
     ax.tick_params(axis="y", labelsize=7)
@@ -93,7 +128,10 @@ def _dimension_chart(daily: pd.DataFrame):
     daily = apply_meter_based_repair_ratios(daily)
     grouped = daily.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False).head(12)
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
-    ax.bar(grouped["dimensions"], grouped["repair_ratio"], color="#0891b2")
+    bars = ax.bar(grouped["dimensions"], grouped["repair_ratio"], color="#0891b2")
+    ax.bar_label(bars, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=3, fontsize=6.5, fontweight="bold", rotation=90)
+    max_value = grouped["repair_ratio"].max()
+    ax.set_ylim(0, max_value * 1.28 if pd.notna(max_value) and max_value else 1)
     _style_axes(ax, "Dimension Analysis", y_percent=True)
     ax.tick_params(axis="x", labelrotation=35, labelsize=7)
     return _figure_to_image(fig)
@@ -111,6 +149,10 @@ def _amount_chart(df: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     ax.plot(grouped["date"], grouped["total_repair_amount"], color="#7c3aed", linewidth=2.6, marker="o", label="Total Repair Amount")
     ax.plot(grouped["date"], grouped["total_repair_amount_incl_skelp"], color="#ea580c", linewidth=2.6, marker="o", label="Total Repair Amount incl. Skelp")
+    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount"], _short_num, "#7c3aed", 8)
+    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_incl_skelp"], _short_num, "#ea580c", -14)
+    max_value = grouped[["total_repair_amount", "total_repair_amount_incl_skelp"]].max().max()
+    ax.set_ylim(0, max_value * 1.28 if max_value else 1)
     _style_axes(ax, "Repair Amount Trend")
     ax.legend(fontsize=7, loc="best")
     fig.autofmt_xdate(rotation=20)
