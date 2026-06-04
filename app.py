@@ -167,21 +167,30 @@ if filtered.empty:
 
 available_dates = sorted(filtered["date"].dt.date.unique())
 selected_date = st.selectbox("Date", available_dates, index=len(available_dates) - 1)
+selected_date_df = filtered[filtered["date"].dt.date == selected_date].copy()
+filtered_to_selected_date = filtered[filtered["date"].dt.date <= selected_date].copy()
 
-if st.button("Generate A3 PDF Report"):
+st.download_button(
+    "Download Selected Date CSV",
+    data=format_preview(selected_date_df, display_unit).to_csv(index=False).encode("utf-8-sig"),
+    file_name=f"daily_repair_rate_archive_{selected_date}_{display_unit}.csv",
+    mime="text/csv",
+)
+
+if st.button("Generate Selected Date A3 PDF Report"):
     with st.spinner("A3 PDF report hazırlanıyor..."):
-        st.session_state.pdf_report = build_a3_pdf_report(filtered, selected_date, selected_status, baseline_master_df, display_unit)
+        st.session_state.pdf_report = build_a3_pdf_report(filtered_to_selected_date, selected_date, selected_status, baseline_master_df, display_unit)
         st.session_state.pdf_report_name = f"daily_repair_rate_report_{selected_date}.pdf"
 
 if st.session_state.pdf_report:
     st.download_button(
-        "Download A3 PDF Report",
+        "Download Selected Date A3 PDF Report",
         data=st.session_state.pdf_report,
         file_name=st.session_state.pdf_report_name,
         mime="application/pdf",
     )
 
-st.plotly_chart(charts.overall_daily_trend(filtered, baseline_master_df), use_container_width=True)
+st.plotly_chart(charts.overall_daily_trend(filtered_to_selected_date, baseline_master_df), use_container_width=True)
 if baseline_master_df.empty:
     st.caption("Historical baseline is not loaded.")
 else:
@@ -189,17 +198,17 @@ else:
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.worst_projects_today(filtered, selected_date), use_container_width=True)
+    st.plotly_chart(charts.worst_projects_today(selected_date_df, selected_date), use_container_width=True)
 with right:
-    projects = sorted(filtered["project_no"].unique())
+    projects = sorted(selected_date_df["project_no"].unique())
     selected_project = st.selectbox("Project", projects)
-    st.plotly_chart(charts.project_trend(filtered, selected_project), use_container_width=True)
+    st.plotly_chart(charts.project_trend(filtered_to_selected_date, selected_project), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.dimension_analysis(filtered), use_container_width=True)
+    st.plotly_chart(charts.dimension_analysis(selected_date_df), use_container_width=True)
 with right:
-    st.plotly_chart(charts.repair_amount_trend(filtered, display_unit), use_container_width=True)
+    st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 
 with st.expander("Master data"):
     st.dataframe(format_preview(filtered, display_unit), use_container_width=True)

@@ -99,13 +99,14 @@ def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     )
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
-    grouped["cumulative_repair_amount_display"] = grouped["total_repair_amount_display"].cumsum()
+    grouped["daily_repair_amount_display"] = grouped["total_repair_amount_display"].diff()
+    grouped["daily_repair_amount_display"] = grouped["daily_repair_amount_display"].fillna(grouped["total_repair_amount_display"])
 
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=grouped["date"],
-            y=grouped["total_repair_amount_display"],
+            y=grouped["daily_repair_amount_display"],
             name="Daily Repair Amount",
             marker_color="#a78bfa",
             opacity=0.72,
@@ -114,7 +115,7 @@ def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     fig.add_trace(
         go.Scatter(
             x=grouped["date"],
-            y=grouped["cumulative_repair_amount_display"],
+            y=grouped["total_repair_amount_display"],
             name="Total Repair Amount",
             mode="lines+markers",
             line={"color": "#7c3aed", "width": 4},

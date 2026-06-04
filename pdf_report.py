@@ -160,19 +160,20 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     )
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
-    grouped["cumulative_repair_amount_display"] = grouped["total_repair_amount_display"].cumsum()
+    grouped["daily_repair_amount_display"] = grouped["total_repair_amount_display"].diff()
+    grouped["daily_repair_amount_display"] = grouped["daily_repair_amount_display"].fillna(grouped["total_repair_amount_display"])
 
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     x_positions = range(len(grouped))
     ax.bar(
         list(x_positions),
-        grouped["total_repair_amount_display"],
+        grouped["daily_repair_amount_display"],
         width=0.46,
         color="#a78bfa",
         alpha=0.72,
         label="Daily Repair Amount",
     )
-    for x_value, y_value in zip(x_positions, grouped["total_repair_amount_display"]):
+    for x_value, y_value in zip(x_positions, grouped["daily_repair_amount_display"]):
         ax.annotate(
             _full_num(y_value),
             xy=(x_value, y_value),
@@ -187,17 +188,17 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
         )
     ax.plot(
         x_positions,
-        grouped["cumulative_repair_amount_display"],
+        grouped["total_repair_amount_display"],
         color="#7c3aed",
         linewidth=2.6,
         marker="o",
         label="Total Repair Amount",
     )
-    _add_point_labels(ax, x_positions, grouped["cumulative_repair_amount_display"], _short_num, "#7c3aed", 8)
+    _add_point_labels(ax, x_positions, grouped["total_repair_amount_display"], _short_num, "#7c3aed", 8)
     max_value = grouped[
         [
             "total_repair_amount_display",
-            "cumulative_repair_amount_display",
+            "daily_repair_amount_display",
         ]
     ].max().max()
     ax.set_ylim(0, max_value * 1.28 if max_value else 1)
