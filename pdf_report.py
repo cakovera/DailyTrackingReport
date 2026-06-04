@@ -42,6 +42,10 @@ def _short_num(value: float) -> str:
     return f"{value:.1f}"
 
 
+def _full_num(value: float) -> str:
+    return f"{value:,.2f}" if pd.notna(value) else ""
+
+
 def _add_point_labels(ax, x_values, y_values, formatter, color: str, y_offset: int) -> None:
     for x_value, y_value in zip(x_values, y_values):
         if not pd.notna(y_value):
@@ -156,27 +160,52 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     )
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
-    grouped["total_repair_amount_incl_skelp_display"] = amount_in_display_unit(
-        grouped["total_repair_amount_incl_skelp"], display_unit
-    )
+    grouped["cumulative_repair_amount_display"] = grouped["total_repair_amount_display"].cumsum()
+
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
-    ax.plot(grouped["date"], grouped["total_repair_amount_display"], color="#7c3aed", linewidth=2.6, marker="o", label="Total Repair Amount")
+    x_positions = range(len(grouped))
+    ax.bar(
+        list(x_positions),
+        grouped["total_repair_amount_display"],
+        width=0.46,
+        color="#a78bfa",
+        alpha=0.72,
+        label="Daily Repair Amount",
+    )
+    for x_value, y_value in zip(x_positions, grouped["total_repair_amount_display"]):
+        ax.annotate(
+            _full_num(y_value),
+            xy=(x_value, y_value),
+            xytext=(0, 4),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=6.4,
+            color="#4c1d95",
+            fontweight="bold",
+            rotation=90,
+        )
     ax.plot(
-        grouped["date"],
-        grouped["total_repair_amount_incl_skelp_display"],
-        color="#ea580c",
+        x_positions,
+        grouped["cumulative_repair_amount_display"],
+        color="#7c3aed",
         linewidth=2.6,
         marker="o",
-        label="Total Repair Amount incl. Skelp",
+        label="Total Repair Amount",
     )
-    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_display"], _short_num, "#7c3aed", 8)
-    _add_point_labels(ax, grouped["date"], grouped["total_repair_amount_incl_skelp_display"], _short_num, "#ea580c", -14)
-    max_value = grouped[["total_repair_amount_display", "total_repair_amount_incl_skelp_display"]].max().max()
+    _add_point_labels(ax, x_positions, grouped["cumulative_repair_amount_display"], _short_num, "#7c3aed", 8)
+    max_value = grouped[
+        [
+            "total_repair_amount_display",
+            "cumulative_repair_amount_display",
+        ]
+    ].max().max()
     ax.set_ylim(0, max_value * 1.28 if max_value else 1)
     _style_axes(ax, f"Repair Amount Trend ({unit})")
     ax.set_ylabel(f"Total Repair Amount ({unit})", fontsize=8)
-    ax.legend(fontsize=7, loc="best")
-    fig.autofmt_xdate(rotation=20)
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels([value.strftime("%Y-%m-%d") for value in grouped["date"]], rotation=20, ha="right")
+    ax.legend(fontsize=6.4, loc="best")
     return _figure_to_image(fig)
 
 

@@ -99,30 +99,33 @@ def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     )
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
-    grouped["total_repair_amount_incl_skelp_display"] = amount_in_display_unit(
-        grouped["total_repair_amount_incl_skelp"], display_unit
-    )
-    fig = px.line(
-        grouped,
-        x="date",
-        y=["total_repair_amount_display", "total_repair_amount_incl_skelp_display"],
-        markers=True,
-        title=f"Repair Amount Trend ({unit})",
-        color_discrete_sequence=["#7c3aed", "#ea580c"],
-    )
-    fig.update_traces(line={"width": 4}, marker={"size": 9})
-    fig.update_layout(
-        xaxis_title="Date",
-        yaxis_title=f"Total Repair Amount ({unit})",
-        legend_title_text="",
-    )
-    fig.for_each_trace(
-        lambda trace: trace.update(
-            name={
-                "total_repair_amount_display": "Total Repair Amount",
-                "total_repair_amount_incl_skelp_display": "Total Repair Amount incl. Skelp",
-            }.get(trace.name, trace.name)
+    grouped["cumulative_repair_amount_display"] = grouped["total_repair_amount_display"].cumsum()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=grouped["date"],
+            y=grouped["total_repair_amount_display"],
+            name="Daily Repair Amount",
+            marker_color="#a78bfa",
+            opacity=0.72,
         )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=grouped["date"],
+            y=grouped["cumulative_repair_amount_display"],
+            name="Total Repair Amount",
+            mode="lines+markers",
+            line={"color": "#7c3aed", "width": 4},
+            marker={"size": 9},
+        )
+    )
+    fig.update_layout(
+        title=f"Repair Amount Trend ({unit})",
+        xaxis_title="Date",
+        yaxis_title=f"Repair Amount ({unit})",
+        legend_title_text="",
     )
     fig.update_xaxes(tickformat="%Y-%m-%d")
     return fig
