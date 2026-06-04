@@ -118,10 +118,11 @@ def _overall_chart(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
 
 
 def _worst_projects_chart(df: pd.DataFrame, selected_date):
-    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").sort_values("repair_ratio")
+    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").sort_values("repair_ratio").copy()
+    daily["project_dimension"] = daily["project_no"] + " | " + daily["dimensions"]
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     bar_colors = ["#16a34a" if status == "Completed" else "#f97316" for status in daily["project_status"]]
-    bars = ax.barh(daily["project_no"], daily["repair_ratio"], color=bar_colors)
+    bars = ax.barh(daily["project_dimension"], daily["repair_ratio"], color=bar_colors)
     ax.bar_label(bars, labels=[_pct(value) for value in daily["repair_ratio"]], padding=3, fontsize=7, fontweight="bold")
     max_value = daily["repair_ratio"].max()
     ax.set_xlim(0, max_value * 1.22 if pd.notna(max_value) and max_value else 1)

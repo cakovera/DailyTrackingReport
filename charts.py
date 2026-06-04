@@ -46,17 +46,18 @@ def overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame | None = Non
 
 
 def worst_projects_today(df: pd.DataFrame, selected_date):
-    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio")
+    daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").copy()
+    daily["project_dimension"] = daily["project_no"] + " | " + daily["dimensions"]
     fig = px.bar(
         daily,
         x="repair_ratio",
-        y="project_no",
+        y="project_dimension",
         color="project_status",
         color_discrete_map=STATUS_COLORS,
         orientation="h",
         title="Worst Projects Today",
     )
-    fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="Repair Ratio", yaxis_title="Project No.")
+    fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="Repair Ratio", yaxis_title="Project / Dimension")
     fig.update_xaxes(tickformat=".2%")
     return fig
 
