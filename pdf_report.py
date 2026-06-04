@@ -24,6 +24,9 @@ from calculations import (
 )
 
 
+DAILY_REPAIR_VISUAL_SCALE = 100
+
+
 def _pct(value: float) -> str:
     return f"{value:.2%}" if pd.notna(value) else ""
 
@@ -161,30 +164,37 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
     grouped["daily_repair_amount_display"] = grouped["total_repair_amount_display"].diff()
-    grouped["daily_repair_amount_display"] = grouped["daily_repair_amount_display"].fillna(grouped["total_repair_amount_display"])
+    grouped["daily_repair_amount_scaled_display"] = grouped["daily_repair_amount_display"] * DAILY_REPAIR_VISUAL_SCALE
 
     fig, ax = plt.subplots(figsize=(7.8, 2.9))
     x_positions = range(len(grouped))
-    ax.bar(
-        list(x_positions),
-        grouped["daily_repair_amount_display"],
-        width=0.46,
-        color="#a78bfa",
-        alpha=0.72,
-        label="Daily Repair Amount",
+    ax.plot(
+        x_positions,
+        grouped["daily_repair_amount_scaled_display"],
+        color="#a855f7",
+        linewidth=2.3,
+        linestyle=":",
+        marker="o",
+        label=f"Daily Repair Amount (x{DAILY_REPAIR_VISUAL_SCALE} visual scale)",
     )
-    for x_value, y_value in zip(x_positions, grouped["daily_repair_amount_display"]):
+    for x_value, scaled_value, actual_value in zip(
+        x_positions,
+        grouped["daily_repair_amount_scaled_display"],
+        grouped["daily_repair_amount_display"],
+    ):
+        if not pd.notna(actual_value) or not pd.notna(scaled_value):
+            continue
         ax.annotate(
-            _full_num(y_value),
-            xy=(x_value, y_value),
-            xytext=(0, 4),
+            _full_num(actual_value),
+            xy=(x_value, scaled_value),
+            xytext=(0, 8),
             textcoords="offset points",
             ha="center",
             va="bottom",
             fontsize=6.4,
-            color="#4c1d95",
+            color="#581c87",
             fontweight="bold",
-            rotation=90,
+            bbox={"boxstyle": "round,pad=0.14", "fc": "white", "ec": "#a855f7", "lw": 0.4, "alpha": 0.82},
         )
     ax.plot(
         x_positions,
@@ -198,11 +208,11 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     max_value = grouped[
         [
             "total_repair_amount_display",
-            "daily_repair_amount_display",
+            "daily_repair_amount_scaled_display",
         ]
     ].max().max()
     ax.set_ylim(0, max_value * 1.28 if max_value else 1)
-    _style_axes(ax, f"Repair Amount Trend ({unit})")
+    _style_axes(ax, f"Repair Amount Trend ({unit}) - Daily shown as x{DAILY_REPAIR_VISUAL_SCALE}")
     ax.set_ylabel(f"Total Repair Amount ({unit})", fontsize=8)
     ax.set_xticks(list(x_positions))
     ax.set_xticklabels([value.strftime("%Y-%m-%d") for value in grouped["date"]], rotation=20, ha="right")

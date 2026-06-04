@@ -11,6 +11,8 @@ STATUS_COLORS = {
     "In Progress": "#f97316",
 }
 
+DAILY_REPAIR_VISUAL_SCALE = 100
+
 
 def _pct_axis(fig):
     fig.update_yaxes(tickformat=".2%")
@@ -100,16 +102,26 @@ def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
     grouped["daily_repair_amount_display"] = grouped["total_repair_amount_display"].diff()
-    grouped["daily_repair_amount_display"] = grouped["daily_repair_amount_display"].fillna(grouped["total_repair_amount_display"])
+    grouped["daily_repair_amount_scaled_display"] = grouped["daily_repair_amount_display"] * DAILY_REPAIR_VISUAL_SCALE
 
     fig = go.Figure()
     fig.add_trace(
-        go.Bar(
+        go.Scatter(
             x=grouped["date"],
-            y=grouped["daily_repair_amount_display"],
-            name="Daily Repair Amount",
-            marker_color="#a78bfa",
-            opacity=0.72,
+            y=grouped["daily_repair_amount_scaled_display"],
+            name=f"Daily Repair Amount (x{DAILY_REPAIR_VISUAL_SCALE} visual scale)",
+            mode="lines+markers+text",
+            line={"color": "#a855f7", "width": 3, "dash": "dot"},
+            marker={"size": 8},
+            text=grouped["daily_repair_amount_display"].map(lambda value: f"{value:,.2f}"),
+            textposition="top center",
+            customdata=grouped["daily_repair_amount_display"],
+            hovertemplate=(
+                "Date: %{x|%Y-%m-%d}<br>"
+                "Daily Repair Amount: %{customdata:,.2f}<br>"
+                f"Displayed as: daily x{DAILY_REPAIR_VISUAL_SCALE} = "
+                "%{y:,.2f}<extra></extra>"
+            ),
         )
     )
     fig.add_trace(
@@ -120,10 +132,11 @@ def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
             mode="lines+markers",
             line={"color": "#7c3aed", "width": 4},
             marker={"size": 9},
+            hovertemplate="Date: %{x|%Y-%m-%d}<br>Total Repair Amount: %{y:,.2f}<extra></extra>",
         )
     )
     fig.update_layout(
-        title=f"Repair Amount Trend ({unit})",
+        title=f"Repair Amount Trend ({unit}) - Daily line shown as x{DAILY_REPAIR_VISUAL_SCALE}",
         xaxis_title="Date",
         yaxis_title=f"Repair Amount ({unit})",
         legend_title_text="",
