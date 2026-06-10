@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from calculations import amount_in_display_unit, apply_meter_based_repair_ratios, daily_weighted_repair_ratios, unit_label
+from calculations import apply_meter_based_repair_ratios, daily_weighted_repair_ratios, repair_amount_trend_data, unit_label
 
 STATUS_COLORS = {
     "Completed": "#16a34a",
@@ -91,17 +91,8 @@ def dimension_analysis(df: pd.DataFrame):
 
 
 def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
-    grouped = (
-        df.groupby("date", as_index=False)
-        .agg(
-            total_repair_amount=("total_repair_amount", "sum"),
-            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
-        )
-        .sort_values("date")
-    )
     unit = unit_label(display_unit)
-    grouped["total_repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
-    grouped["daily_repair_amount_display"] = grouped["total_repair_amount_display"].diff()
+    grouped = repair_amount_trend_data(df, display_unit)
     grouped["daily_repair_amount_scaled_display"] = grouped["daily_repair_amount_display"] * DAILY_REPAIR_VISUAL_SCALE
 
     fig = go.Figure()

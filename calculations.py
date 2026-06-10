@@ -23,6 +23,13 @@ def length_in_display_unit(values, display_unit: str):
     return values
 
 
+def normalize_repair_trend_project_key(project_no) -> str:
+    value = str(project_no).strip()
+    value = pd.Series([value]).str.replace(r"\s+", " ", regex=True).iloc[0]
+    value = pd.Series([value]).str.replace(r"\s+#\d+$", "", regex=True).iloc[0]
+    return pd.Series([value]).str.replace(r"\s+-\s+\d+$", "", regex=True).iloc[0]
+
+
 def apply_meter_based_repair_ratios(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy with repair ratios recalculated as meter / meter.
 
@@ -64,3 +71,42 @@ def daily_weighted_repair_ratios(df: pd.DataFrame, baseline_df: pd.DataFrame | N
         (grouped["total_repair_amount_incl_skelp"] + baseline_repair_incl) / denominator_m
     ).fillna(0)
     return grouped
+
+
+def repair_amount_trend_data(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
+    """Build repair amount trend data with non-negative daily increments.
+
+    Daily repair is calculated by project/dimension against the previous report.
+    Project revision suffixes like "#2" are treated as the same project so a
+    rebaseline from 2025+2026 totals to 2026-only totals does not become a new
+    daily repair amount.
+    """
+    data = df[["date", "project_no", "dimensions", "total_repair_amount"]].copy()
+    data["date"] = pd.to_datetime(data["date"])
+    data["repair_trend_project_key"] = data["project_no"].map(normalize_repair_trend_project_key)
+    data["total_repair_amount_display"] = amount_in_display_unit(data["total_repair_amount"], display_unit)
+
+    snapshot = (
+        data.groupby("date", as_index=False)
+        .agg(total_repair_amount_display=("total_repair_amount_display", "sum"))
+        .sort_values("date")
+    )
+    if snapshot.empty:
+        return snapshot.assign(daily_repair_amount_display=[])
+
+    by_project = (
+        data.groupby(["repair_trend_project_key", "dimensions", "date"], as_index=False)
+        .agg(total_repair_amount_display=("total_repair_amount_display", "sum"))
+        .sort_values(["repair_trend_project_key", "dimensions", "date"])
+    )
+    by_project["previous_total"] = by_project.groupby(["repair_trend_project_key", "dimensions"])["total_repair_amount_display"].shift(1)
+    first_report_date = snapshot["date"].min()
+    by_project["daily_delta"] = by_project["total_repair_amount_display"] - by_project["previous_total"]
+    new_after_first_report = by_project["previous_total"].isna() & (by_project["date"] > first_report_date)
+    by_project.loc[new_after_first_report, "daily_delta"] = by_project.loc[new_after_first_report, "total_repair_amount_display"]
+    by_project["daily_delta"] = by_project["daily_delta"].clip(lower=0).fillna(0)
+
+    daily = by_project.groupby("date", as_index=False).agg(daily_repair_amount_display=("daily_delta", "sum"))
+    result = snapshot.merge(daily, on="date", how="left").fillna({"daily_repair_amount_display": 0})
+    result["daily_repair_amount_display"] = result["daily_repair_amount_display"].clip(lower=0)
+    return result
