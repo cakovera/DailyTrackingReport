@@ -26,6 +26,8 @@ from calculations import (
 
 
 DAILY_REPAIR_VISUAL_SCALE = 100
+CHART_FIGSIZE = (9.6, 3.6)
+CHART_DPI = 240
 
 
 def _pct(value: float) -> str:
@@ -61,10 +63,10 @@ def _add_point_labels(ax, x_values, y_values, formatter, color: str, y_offset: i
             textcoords="offset points",
             ha="center",
             va="bottom" if y_offset >= 0 else "top",
-            fontsize=6.5,
+            fontsize=7.2,
             color=color,
             fontweight="bold",
-            bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": color, "lw": 0.4, "alpha": 0.82},
+            bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": color, "lw": 0.45, "alpha": 0.9},
         )
 
 
@@ -93,28 +95,32 @@ def _table(data, col_widths=None, font_size=8):
 
 def _figure_to_image(fig, display_width=19.8 * cm, display_height=7.1 * cm):
     png_buffer = BytesIO()
-    fig.savefig(png_buffer, format="png", dpi=140, bbox_inches="tight", facecolor="white")
+    fig.tight_layout(pad=1.0)
+    fig.savefig(png_buffer, format="png", dpi=CHART_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     png_buffer.seek(0)
     return Image(png_buffer, width=display_width, height=display_height)
 
 
 def _style_axes(ax, title: str, y_percent: bool = False):
-    ax.set_title(title, fontsize=12, fontweight="bold", color="#111827", pad=10)
-    ax.set_facecolor("#f8fafc")
-    ax.grid(True, axis="y", color="#dbe3ef", linewidth=0.8)
-    ax.tick_params(axis="both", labelsize=8, colors="#111827")
-    for spine in ax.spines.values():
-        spine.set_color("#cbd5e1")
+    ax.set_title(title, fontsize=13, fontweight="bold", color="#111827", pad=12)
+    ax.set_facecolor("#ffffff")
+    ax.grid(True, axis="y", color="#e5e7eb", linewidth=0.85)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="both", labelsize=8.5, colors="#334155")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#cbd5e1")
+    ax.spines["bottom"].set_color("#cbd5e1")
     if y_percent:
         ax.yaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
 
 
 def _overall_chart(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
     grouped = daily_weighted_repair_ratios(df, baseline_df)
-    fig, ax = plt.subplots(figsize=(7.8, 2.9))
-    ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=2.6, marker="o", label="Repair Ratio")
-    ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=2.6, marker="o", label="Repair Ratio incl. Skelp")
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    ax.plot(grouped["date"], grouped["weighted_repair_ratio"], color="#2563eb", linewidth=3.0, marker="o", markersize=6.5, label="Repair Ratio")
+    ax.plot(grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], color="#dc2626", linewidth=3.0, marker="o", markersize=6.5, label="Repair Ratio incl. Skelp")
     _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], _pct, "#2563eb", 8)
     _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], _pct, "#dc2626", -14)
     max_value = grouped[["weighted_repair_ratio", "weighted_repair_ratio_incl_skelp"]].max().max()
@@ -128,28 +134,28 @@ def _overall_chart(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
 def _worst_projects_chart(df: pd.DataFrame, selected_date):
     daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == selected_date]).nlargest(10, "repair_ratio").sort_values("repair_ratio").copy()
     daily["project_dimension"] = daily["project_no"] + " | " + daily["dimensions"]
-    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
     bar_colors = ["#16a34a" if status == "Completed" else "#f97316" for status in daily["project_status"]]
     bars = ax.barh(daily["project_dimension"], daily["repair_ratio"], color=bar_colors)
-    ax.bar_label(bars, labels=[_pct(value) for value in daily["repair_ratio"]], padding=3, fontsize=7, fontweight="bold")
+    ax.bar_label(bars, labels=[_pct(value) for value in daily["repair_ratio"]], padding=4, fontsize=7.4, fontweight="bold")
     max_value = daily["repair_ratio"].max()
     ax.set_xlim(0, max_value * 1.22 if pd.notna(max_value) and max_value else 1)
     ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
     _style_axes(ax, "Worst Projects Today")
-    ax.tick_params(axis="y", labelsize=7)
+    ax.tick_params(axis="y", labelsize=7.4)
     return _figure_to_image(fig)
 
 
 def _dimension_chart(daily: pd.DataFrame):
     daily = apply_meter_based_repair_ratios(daily)
     grouped = daily.groupby("dimensions", as_index=False)["repair_ratio"].mean().sort_values("repair_ratio", ascending=False).head(12)
-    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
     bars = ax.bar(grouped["dimensions"], grouped["repair_ratio"], color="#0891b2")
-    ax.bar_label(bars, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=3, fontsize=6.5, fontweight="bold", rotation=90)
+    ax.bar_label(bars, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=4, fontsize=7.0, fontweight="bold", rotation=90)
     max_value = grouped["repair_ratio"].max()
     ax.set_ylim(0, max_value * 1.28 if pd.notna(max_value) and max_value else 1)
     _style_axes(ax, "Dimension Analysis", y_percent=True)
-    ax.tick_params(axis="x", labelrotation=35, labelsize=7)
+    ax.tick_params(axis="x", labelrotation=35, labelsize=7.4)
     return _figure_to_image(fig)
 
 
@@ -170,21 +176,21 @@ def _production_type_chart(daily: pd.DataFrame):
     grouped["repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
     grouped["repair_ratio_incl_skelp"] = (grouped["total_repair_amount_incl_skelp"] / denominator_m).fillna(0)
 
-    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
     x_positions = range(len(grouped))
     width = 0.34
     left_positions = [x - width / 2 for x in x_positions]
     right_positions = [x + width / 2 for x in x_positions]
     bars_a = ax.bar(left_positions, grouped["repair_ratio"], width=width, color="#2563eb", label="Repair Ratio")
     bars_b = ax.bar(right_positions, grouped["repair_ratio_incl_skelp"], width=width, color="#dc2626", label="Repair Ratio incl. Skelp")
-    ax.bar_label(bars_a, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=3, fontsize=7, fontweight="bold")
-    ax.bar_label(bars_b, labels=[_pct(value) for value in grouped["repair_ratio_incl_skelp"]], padding=3, fontsize=7, fontweight="bold")
+    ax.bar_label(bars_a, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=4, fontsize=7.6, fontweight="bold")
+    ax.bar_label(bars_b, labels=[_pct(value) for value in grouped["repair_ratio_incl_skelp"]], padding=4, fontsize=7.6, fontweight="bold")
     max_value = grouped[["repair_ratio", "repair_ratio_incl_skelp"]].max().max()
     ax.set_ylim(0, max_value * 1.3 if pd.notna(max_value) and max_value else 1)
     ax.set_xticks(list(x_positions))
     ax.set_xticklabels(grouped["production_type"])
     _style_axes(ax, "Production Type Repair Ratio", y_percent=True)
-    ax.legend(fontsize=7, loc="best")
+    ax.legend(fontsize=7.6, loc="best", frameon=True, framealpha=0.9)
     return _figure_to_image(fig)
 
 
@@ -193,7 +199,7 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     grouped = repair_amount_trend_data(df, display_unit)
     grouped["daily_repair_amount_scaled_display"] = grouped["daily_repair_amount_display"] * DAILY_REPAIR_VISUAL_SCALE
 
-    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
     x_positions = range(len(grouped))
     ax.plot(
         x_positions,
@@ -218,16 +224,16 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
             textcoords="offset points",
             ha="center",
             va="bottom",
-            fontsize=6.4,
+            fontsize=7.0,
             color="#581c87",
             fontweight="bold",
-            bbox={"boxstyle": "round,pad=0.14", "fc": "white", "ec": "#a855f7", "lw": 0.4, "alpha": 0.82},
+            bbox={"boxstyle": "round,pad=0.16", "fc": "white", "ec": "#a855f7", "lw": 0.45, "alpha": 0.9},
         )
     ax.plot(
         x_positions,
         grouped["total_repair_amount_display"],
         color="#7c3aed",
-        linewidth=2.6,
+        linewidth=3.0,
         marker="o",
         label="Total Repair Amount",
     )
@@ -243,7 +249,7 @@ def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     ax.set_ylabel(f"Total Repair Amount ({unit})", fontsize=8)
     ax.set_xticks(list(x_positions))
     ax.set_xticklabels([value.strftime("%Y-%m-%d") for value in grouped["date"]], rotation=20, ha="right")
-    ax.legend(fontsize=6.4, loc="best")
+    ax.legend(fontsize=7.2, loc="best", frameon=True, framealpha=0.9)
     return _figure_to_image(fig)
 
 
