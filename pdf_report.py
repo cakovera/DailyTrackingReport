@@ -153,6 +153,41 @@ def _dimension_chart(daily: pd.DataFrame):
     return _figure_to_image(fig)
 
 
+def _production_type_chart(daily: pd.DataFrame):
+    daily = apply_meter_based_repair_ratios(daily)
+    if "production_type" not in daily.columns:
+        daily["production_type"] = "Coil"
+    grouped = (
+        daily.groupby("production_type", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+        .sort_values("production_type")
+    )
+    denominator_m = (grouped["repaired_spiral_length"] * METERS_PER_FOOT).where(grouped["repaired_spiral_length"] != 0)
+    grouped["repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
+    grouped["repair_ratio_incl_skelp"] = (grouped["total_repair_amount_incl_skelp"] / denominator_m).fillna(0)
+
+    fig, ax = plt.subplots(figsize=(7.8, 2.9))
+    x_positions = range(len(grouped))
+    width = 0.34
+    left_positions = [x - width / 2 for x in x_positions]
+    right_positions = [x + width / 2 for x in x_positions]
+    bars_a = ax.bar(left_positions, grouped["repair_ratio"], width=width, color="#2563eb", label="Repair Ratio")
+    bars_b = ax.bar(right_positions, grouped["repair_ratio_incl_skelp"], width=width, color="#dc2626", label="Repair Ratio incl. Skelp")
+    ax.bar_label(bars_a, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=3, fontsize=7, fontweight="bold")
+    ax.bar_label(bars_b, labels=[_pct(value) for value in grouped["repair_ratio_incl_skelp"]], padding=3, fontsize=7, fontweight="bold")
+    max_value = grouped[["repair_ratio", "repair_ratio_incl_skelp"]].max().max()
+    ax.set_ylim(0, max_value * 1.3 if pd.notna(max_value) and max_value else 1)
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(grouped["production_type"])
+    _style_axes(ax, "Production Type Repair Ratio", y_percent=True)
+    ax.legend(fontsize=7, loc="best")
+    return _figure_to_image(fig)
+
+
 def _amount_chart(df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     grouped = repair_amount_trend_data(df, display_unit)
@@ -312,7 +347,7 @@ def build_a3_pdf_report(
                 _worst_projects_chart(df, report_date),
             ],
             [
-                _dimension_chart(daily),
+                _production_type_chart(daily),
                 _amount_chart(df, display_unit),
             ],
         ],
