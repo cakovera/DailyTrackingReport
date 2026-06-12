@@ -155,11 +155,26 @@ if master_df.empty:
     st.info("Dashboard için master database içinde veri yok. Önce geçerli bir Excel dosyası import edin.")
     st.stop()
 
+if "production_type" not in master_df.columns:
+    master_df["production_type"] = "Coil"
+master_df["production_type"] = master_df["production_type"].fillna("Coil")
+
 status_options = sorted(master_df["project_status"].dropna().unique())
 default_status = [s for s in ["Completed", "In Progress"] if s in status_options] or status_options
+type_options = sorted(master_df["production_type"].dropna().unique())
 selected_status = st.multiselect("Status Filter", status_options, default=default_status)
+selected_production_type = st.multiselect("Production Type Filter", type_options, default=type_options)
 filtered = master_df[master_df["project_status"].isin(selected_status)] if selected_status else master_df
+filtered = filtered[filtered["production_type"].isin(selected_production_type)] if selected_production_type else filtered
 filtered = apply_meter_based_repair_ratios(filtered)
+baseline_for_filtered = baseline_master_df
+if selected_production_type and set(selected_production_type) != set(type_options):
+    if "production_type" in baseline_for_filtered.columns:
+        baseline_for_filtered = baseline_for_filtered[
+            baseline_for_filtered["production_type"].isin(selected_production_type)
+        ]
+    else:
+        baseline_for_filtered = pd.DataFrame()
 
 if filtered.empty:
     st.warning("Seçili filtrelerle veri bulunamadı.")
@@ -179,7 +194,7 @@ st.download_button(
 
 if st.button("Generate Selected Date A3 PDF Report"):
     with st.spinner("A3 PDF report hazırlanıyor..."):
-        st.session_state.pdf_report = build_a3_pdf_report(filtered_to_selected_date, selected_date, selected_status, baseline_master_df, display_unit)
+        st.session_state.pdf_report = build_a3_pdf_report(filtered_to_selected_date, selected_date, selected_status, baseline_for_filtered, display_unit)
         st.session_state.pdf_report_name = f"daily_repair_rate_report_{selected_date}.pdf"
 
 if st.session_state.pdf_report:
@@ -190,11 +205,11 @@ if st.session_state.pdf_report:
         mime="application/pdf",
     )
 
-st.plotly_chart(charts.overall_daily_trend(filtered_to_selected_date, baseline_master_df), use_container_width=True)
-if baseline_master_df.empty:
+st.plotly_chart(charts.overall_daily_trend(filtered_to_selected_date, baseline_for_filtered), use_container_width=True)
+if baseline_for_filtered.empty:
     st.caption("Historical baseline is not loaded.")
 else:
-    st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_master_df)} projects")
+    st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_for_filtered)} projects")
 
 left, right = st.columns(2)
 with left:
@@ -206,9 +221,11 @@ with right:
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.dimension_analysis(selected_date_df), use_container_width=True)
+    st.plotly_chart(charts.production_type_analysis(selected_date_df), use_container_width=True)
 with right:
-    st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
+    st.plotly_chart(charts.dimension_analysis(selected_date_df), use_container_width=True)
+
+st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 
 with st.expander("Master data"):
     st.dataframe(format_preview(filtered, display_unit), use_container_width=True)

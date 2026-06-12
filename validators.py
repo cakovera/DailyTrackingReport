@@ -18,6 +18,7 @@ ALLOWED_STATUS_MAP = {
 
 REQUIRED_COLUMNS = [
     "date",
+    "production_type",
     "project_no",
     "dimensions",
     "qty",
@@ -101,7 +102,7 @@ def coerce_number(value: object) -> float | None:
 
 def validate_dataframe(df: pd.DataFrame, report: ValidationReport) -> ValidationReport:
     report.add_check("Ana tablo satırları bulundu mu?", not df.empty)
-    report.add_check("Satır sayısı mantıklı mı?", 1 <= len(df) <= 22)
+    report.add_check("Satır sayısı mantıklı mı?", 1 <= len(df) <= 35)
     report.import_rows = len(df)
 
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
@@ -112,7 +113,7 @@ def validate_dataframe(df: pd.DataFrame, report: ValidationReport) -> Validation
 
     for idx, row in df.iterrows():
         excel_row = int(row.get("excel_row", idx + 4))
-        for col in ["date", "project_no", "dimensions"]:
+        for col in ["date", "production_type", "project_no", "dimensions"]:
             if pd.isna(row[col]) or str(row[col]).strip() == "":
                 report.add_error(f"Excel satır {excel_row}: zorunlu alan boş: {col}")
 

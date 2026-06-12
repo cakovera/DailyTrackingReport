@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from calculations import apply_meter_based_repair_ratios, daily_weighted_repair_ratios, repair_amount_trend_data, unit_label
+from calculations import METERS_PER_FOOT, apply_meter_based_repair_ratios, daily_weighted_repair_ratios, repair_amount_trend_data, unit_label
 
 STATUS_COLORS = {
     "Completed": "#16a34a",
@@ -87,6 +87,48 @@ def dimension_analysis(df: pd.DataFrame):
     fig.update_layout(xaxis_title="Dimension", yaxis_title="Average Repair Ratio")
     fig.update_yaxes(tickformat=".2%")
     fig.update_traces(hovertemplate="Dimension: %{x}<br>Average Repair Ratio: %{y:.2%}<extra></extra>")
+    return fig
+
+
+def production_type_analysis(df: pd.DataFrame):
+    data = apply_meter_based_repair_ratios(df)
+    if "production_type" not in data.columns:
+        data["production_type"] = "Coil"
+    grouped = (
+        data.groupby("production_type", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+        .sort_values("production_type")
+    )
+    denominator_m = grouped["repaired_spiral_length"] * METERS_PER_FOOT
+    denominator_m = denominator_m.where(denominator_m != 0)
+    grouped["repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
+    grouped["repair_ratio_incl_skelp"] = (grouped["total_repair_amount_incl_skelp"] / denominator_m).fillna(0)
+    long = grouped.melt(
+        id_vars="production_type",
+        value_vars=["repair_ratio", "repair_ratio_incl_skelp"],
+        var_name="metric",
+        value_name="ratio",
+    )
+    long["metric"] = long["metric"].map(
+        {"repair_ratio": "Repair Ratio", "repair_ratio_incl_skelp": "Repair Ratio incl. Skelp"}
+    )
+    fig = px.bar(
+        long,
+        x="production_type",
+        y="ratio",
+        color="metric",
+        barmode="group",
+        text=long["ratio"].map(lambda value: f"{value:.2%}"),
+        title="Production Type Repair Ratio",
+        color_discrete_sequence=["#2563eb", "#dc2626"],
+    )
+    fig.update_layout(xaxis_title="Production Type", yaxis_title="Weighted Repair Ratio", legend_title_text="")
+    fig.update_yaxes(tickformat=".2%")
+    fig.update_traces(textposition="outside", hovertemplate="%{x}<br>%{fullData.name}: %{y:.2%}<extra></extra>")
     return fig
 
 

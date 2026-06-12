@@ -99,7 +99,9 @@ def repair_amount_trend_data(df: pd.DataFrame, display_unit: str) -> pd.DataFram
         .agg(total_repair_amount_display=("total_repair_amount_display", "sum"))
         .sort_values(["repair_trend_project_key", "dimensions", "date"])
     )
-    by_project["previous_total"] = by_project.groupby(["repair_trend_project_key", "dimensions"])["total_repair_amount_display"].shift(1)
+    by_project["previous_total"] = by_project.groupby(["repair_trend_project_key", "dimensions"])[
+        "total_repair_amount_display"
+    ].shift(1)
     first_report_date = snapshot["date"].min()
     by_project["daily_delta"] = by_project["total_repair_amount_display"] - by_project["previous_total"]
     new_after_first_report = by_project["previous_total"].isna() & (by_project["date"] > first_report_date)

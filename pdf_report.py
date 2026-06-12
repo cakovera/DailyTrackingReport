@@ -259,6 +259,8 @@ def build_a3_pdf_report(
 
     report_date = pd.to_datetime(selected_date).date()
     daily = apply_meter_based_repair_ratios(df[df["date"].dt.date == report_date])
+    if "production_type" not in daily.columns:
+        daily["production_type"] = "Coil"
     unit = unit_label(display_unit)
 
     total_length = daily["project_total_pipe_length"].sum()
@@ -334,6 +336,7 @@ def build_a3_pdf_report(
     worst = daily.nlargest(12, "repair_ratio")[
         [
             "project_no",
+            "production_type",
             "dimensions",
             "qty",
             "project_total_pipe_length",
@@ -344,11 +347,12 @@ def build_a3_pdf_report(
             "repair_ratio_incl_skelp",
         ]
     ]
-    worst_rows = [["Project No.", "Dimension", "Qty", f"Pipe Length ({unit})", f"Repair Amt ({unit})", f"Repair Amt incl. ({unit})", "Status", "Ratio", "Ratio incl."]]
+    worst_rows = [["Project No.", "Type", "Dimension", "Qty", f"Pipe Length ({unit})", f"Repair Amt ({unit})", f"Repair Amt incl. ({unit})", "Status", "Ratio", "Ratio incl."]]
     for _, row in worst.iterrows():
         worst_rows.append(
             [
                 row["project_no"],
+                row["production_type"],
                 row["dimensions"],
                 _num(row["qty"]),
                 _num(length_in_display_unit(row["project_total_pipe_length"], display_unit)),

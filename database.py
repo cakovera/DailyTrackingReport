@@ -17,6 +17,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS repair_rates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
+    production_type TEXT NOT NULL DEFAULT 'Coil',
     project_no TEXT NOT NULL,
     dimensions TEXT NOT NULL,
     qty REAL NOT NULL,
@@ -48,17 +49,18 @@ CREATE TABLE IF NOT EXISTS historical_baselines (
 
 UPSERT_SQL = """
 INSERT INTO repair_rates (
-    date, project_no, dimensions, qty, project_total_pipe_length,
+    date, production_type, project_no, dimensions, qty, project_total_pipe_length,
     repaired_pipes_total_length, repaired_spiral_length, total_repair_amount,
     total_repair_amount_incl_skelp, project_status, repair_ratio,
     repair_ratio_incl_skelp
 ) VALUES (
-    :date, :project_no, :dimensions, :qty, :project_total_pipe_length,
+    :date, :production_type, :project_no, :dimensions, :qty, :project_total_pipe_length,
     :repaired_pipes_total_length, :repaired_spiral_length, :total_repair_amount,
     :total_repair_amount_incl_skelp, :project_status, :repair_ratio,
     :repair_ratio_incl_skelp
 )
 ON CONFLICT(date, project_no, dimensions) DO UPDATE SET
+    production_type = excluded.production_type,
     qty = excluded.qty,
     project_total_pipe_length = excluded.project_total_pipe_length,
     repaired_pipes_total_length = excluded.repaired_pipes_total_length,
@@ -133,6 +135,9 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
     conn = conn or get_connection()
     conn.execute(SCHEMA)
     conn.execute(BASELINE_SCHEMA)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(repair_rates)").fetchall()}
+    if "production_type" not in columns:
+        conn.execute("ALTER TABLE repair_rates ADD COLUMN production_type TEXT NOT NULL DEFAULT 'Coil'")
     conn.commit()
     if should_close:
         conn.close()
@@ -140,6 +145,9 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
 
 def _records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
     write_df = df.drop(columns=["excel_row", "id"], errors="ignore").copy()
+    if "production_type" not in write_df.columns:
+        write_df["production_type"] = "Coil"
+    write_df["production_type"] = write_df["production_type"].fillna("Coil")
     write_df["date"] = pd.to_datetime(write_df["date"]).dt.strftime("%Y-%m-%d")
     records = write_df.where(pd.notna(write_df), None).to_dict(orient="records")
     return records
@@ -221,6 +229,9 @@ def load_master_data(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
 
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
+        if "production_type" not in df.columns:
+            df["production_type"] = "Coil"
+        df["production_type"] = df["production_type"].fillna("Coil")
     return df
 
 
