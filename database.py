@@ -10,6 +10,7 @@ import pandas as pd
 
 TABLE_NAME = "repair_rates"
 BASELINE_TABLE_NAME = "historical_baselines"
+PIPE_TABLE_NAME = "pipe_repair_details"
 DB_PATH = Path(os.getenv("REPAIR_DB_PATH", str(Path("data") / "daily_repair_rate.sqlite")))
 
 
@@ -43,6 +44,23 @@ CREATE TABLE IF NOT EXISTS historical_baselines (
     total_repair_amount_incl_skelp REAL NOT NULL,
     project_status TEXT NOT NULL,
     UNIQUE(project_no, dimensions)
+);
+"""
+
+PIPE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS pipe_repair_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    project_sheet TEXT NOT NULL,
+    block_cell TEXT NOT NULL,
+    pipe_no INTEGER NOT NULL,
+    pipe_length_ft REAL,
+    repair_amount REAL NOT NULL,
+    repair_ratio REAL NOT NULL,
+    repair_count INTEGER,
+    repair_category TEXT NOT NULL,
+    surface_state TEXT NOT NULL,
+    UNIQUE(date, project_sheet, block_cell)
 );
 """
 
@@ -85,6 +103,24 @@ ON CONFLICT(project_no, dimensions) DO UPDATE SET
     total_repair_amount = excluded.total_repair_amount,
     total_repair_amount_incl_skelp = excluded.total_repair_amount_incl_skelp,
     project_status = excluded.project_status;
+"""
+
+PIPE_UPSERT_SQL = """
+INSERT INTO pipe_repair_details (
+    date, project_sheet, block_cell, pipe_no, pipe_length_ft, repair_amount,
+    repair_ratio, repair_count, repair_category, surface_state
+) VALUES (
+    :date, :project_sheet, :block_cell, :pipe_no, :pipe_length_ft, :repair_amount,
+    :repair_ratio, :repair_count, :repair_category, :surface_state
+)
+ON CONFLICT(date, project_sheet, block_cell) DO UPDATE SET
+    pipe_no = excluded.pipe_no,
+    pipe_length_ft = excluded.pipe_length_ft,
+    repair_amount = excluded.repair_amount,
+    repair_ratio = excluded.repair_ratio,
+    repair_count = excluded.repair_count,
+    repair_category = excluded.repair_category,
+    surface_state = excluded.surface_state;
 """
 
 
@@ -135,6 +171,7 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
     conn = conn or get_connection()
     conn.execute(SCHEMA)
     conn.execute(BASELINE_SCHEMA)
+    conn.execute(PIPE_SCHEMA)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(repair_rates)").fetchall()}
     if "production_type" not in columns:
         conn.execute("ALTER TABLE repair_rates ADD COLUMN production_type TEXT NOT NULL DEFAULT 'Coil'")
@@ -165,6 +202,12 @@ def _baseline_records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
         ]
     ].copy()
     return write_df.where(pd.notna(write_df), None).to_dict(orient="records")
+
+
+def _pipe_records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
+    write_df = df.drop(columns=["id"], errors="ignore").copy()
+    write_df["date"] = pd.to_datetime(write_df["date"]).dt.strftime("%Y-%m-%d")
+    return write_df.astype(object).where(pd.notna(write_df), None).to_dict(orient="records")
 
 
 def get_existing_keys(df: pd.DataFrame, conn: sqlite3.Connection | None = None) -> set[tuple[str, str, str]]:
@@ -235,6 +278,49 @@ def load_master_data(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
     return df
 
 
+def upsert_pipe_repair_details(df: pd.DataFrame, conn: sqlite3.Connection | None = None) -> int:
+    if df.empty:
+        return 0
+    records = _pipe_records_from_df(df)
+
+    if get_backend_name() == "supabase":
+        client = _get_supabase_client()
+        client.table(PIPE_TABLE_NAME).upsert(records, on_conflict="date,project_sheet,block_cell").execute()
+        return len(records)
+
+    should_close = conn is None
+    conn = conn or get_connection()
+    init_db(conn)
+    conn.executemany(PIPE_UPSERT_SQL, records)
+    conn.commit()
+    if should_close:
+        conn.close()
+    return len(records)
+
+
+def load_pipe_repair_details(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
+    if get_backend_name() == "supabase":
+        client = _get_supabase_client()
+        try:
+            response = client.table(PIPE_TABLE_NAME).select("*").order("date").execute()
+        except Exception as exc:
+            if PIPE_TABLE_NAME in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
+                return pd.DataFrame()
+            raise
+        df = pd.DataFrame(response.data)
+    else:
+        should_close = conn is None
+        conn = conn or get_connection()
+        init_db(conn)
+        df = pd.read_sql_query("SELECT * FROM pipe_repair_details ORDER BY date, project_sheet, pipe_no", conn)
+        if should_close:
+            conn.close()
+
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def upsert_historical_baselines(df: pd.DataFrame, conn: sqlite3.Connection | None = None) -> int:
     records = _baseline_records_from_df(df)
 
@@ -262,7 +348,10 @@ def load_historical_baselines(conn: sqlite3.Connection | None = None) -> pd.Data
             if "historical_baselines" in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
                 return pd.DataFrame()
             raise
-        return pd.DataFrame(response.data)
+        df = pd.DataFrame(response.data)
+        from baseline import enrich_historical_baseline_metadata
+
+        return enrich_historical_baseline_metadata(df)
 
     should_close = conn is None
     conn = conn or get_connection()
@@ -270,4 +359,6 @@ def load_historical_baselines(conn: sqlite3.Connection | None = None) -> pd.Data
     df = pd.read_sql_query("SELECT * FROM historical_baselines ORDER BY project_no, dimensions", conn)
     if should_close:
         conn.close()
-    return df
+    from baseline import enrich_historical_baseline_metadata
+
+    return enrich_historical_baseline_metadata(df)

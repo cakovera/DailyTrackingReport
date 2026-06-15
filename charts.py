@@ -4,7 +4,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from calculations import METERS_PER_FOOT, apply_meter_based_repair_ratios, daily_weighted_repair_ratios, repair_amount_trend_data, unit_label
+from calculations import (
+    METERS_PER_FOOT,
+    amount_in_display_unit,
+    apply_meter_based_repair_ratios,
+    daily_weighted_repair_ratios,
+    repair_amount_trend_data,
+    unit_label,
+)
 
 STATUS_COLORS = {
     "Completed": "#16a34a",
@@ -90,10 +97,13 @@ def dimension_analysis(df: pd.DataFrame):
     return fig
 
 
-def production_type_analysis(df: pd.DataFrame):
-    data = apply_meter_based_repair_ratios(df)
+def production_type_analysis(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    data = df.copy()
     if "production_type" not in data.columns:
         data["production_type"] = "Coil"
+    if baseline_df is not None and not baseline_df.empty:
+        data = pd.concat([data, baseline_df], ignore_index=True, sort=False)
+    data = apply_meter_based_repair_ratios(data)
     grouped = (
         data.groupby("production_type", as_index=False)
         .agg(
@@ -129,6 +139,316 @@ def production_type_analysis(df: pd.DataFrame):
     fig.update_layout(xaxis_title="Production Type", yaxis_title="Weighted Repair Ratio", legend_title_text="")
     fig.update_yaxes(tickformat=".2%")
     fig.update_traces(textposition="outside", hovertemplate="%{x}<br>%{fullData.name}: %{y:.2%}<extra></extra>")
+    return fig
+
+
+def skelp_impact_analysis(df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    data = apply_meter_based_repair_ratios(df).copy()
+    if "production_type" not in data.columns:
+        data["production_type"] = "Coil"
+    data["project_dimension"] = data["project_no"] + " | " + data["dimensions"] + " | " + data["production_type"]
+    data["skelp_amount_impact_display"] = amount_in_display_unit(
+        data["total_repair_amount_incl_skelp"] - data["total_repair_amount"],
+        display_unit,
+    )
+    grouped = (
+        data.groupby("project_dimension", as_index=False)
+        .agg(
+            skelp_amount_impact=("total_repair_amount_incl_skelp", "sum"),
+            repair_amount=("total_repair_amount", "sum"),
+            skelp_amount_impact_display=("skelp_amount_impact_display", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+    )
+    denominator_m = (grouped["repaired_spiral_length"] * METERS_PER_FOOT).where(grouped["repaired_spiral_length"] != 0)
+    grouped["skelp_ratio_impact"] = ((grouped["skelp_amount_impact"] - grouped["repair_amount"]) / denominator_m).fillna(0)
+    grouped = grouped.sort_values("skelp_ratio_impact", ascending=False).head(10)
+    fig = px.bar(
+        grouped.sort_values("skelp_ratio_impact"),
+        x="skelp_ratio_impact",
+        y="project_dimension",
+        orientation="h",
+        text=grouped.sort_values("skelp_ratio_impact")["skelp_ratio_impact"].map(lambda value: f"+{value:.2%}"),
+        color="skelp_amount_impact_display",
+        color_continuous_scale="OrRd",
+        title="Skelp Impact Analysis",
+    )
+    fig.update_layout(
+        xaxis_title="Repair Ratio Increase from Skelp-end Welds",
+        yaxis_title="Project / Dimension / Type",
+        coloraxis_colorbar_title=f"Extra Repair ({unit})",
+    )
+    fig.update_xaxes(tickformat=".2%")
+    fig.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "%{y}<br>"
+            "Ratio impact: %{x:.2%}<br>"
+            f"Extra repair amount: %{{marker.color:,.2f}} {unit}<extra></extra>"
+        ),
+    )
+    return fig
+
+
+def repair_amount_pareto(df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    data = df.copy()
+    if "production_type" not in data.columns:
+        data["production_type"] = "Coil"
+    data["project_dimension"] = data["project_no"] + " | " + data["dimensions"] + " | " + data["production_type"]
+    data["repair_amount_display"] = amount_in_display_unit(data["total_repair_amount"], display_unit)
+    grouped_all = (
+        data.groupby("project_dimension", as_index=False)
+        .agg(repair_amount_display=("repair_amount_display", "sum"))
+        .sort_values("repair_amount_display", ascending=False)
+    )
+    total = grouped_all["repair_amount_display"].sum()
+    grouped = grouped_all.head(12).copy()
+    grouped["cumulative_share"] = grouped["repair_amount_display"].cumsum() / total if total else 0
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=grouped["project_dimension"],
+            y=grouped["repair_amount_display"],
+            name="Repair Amount",
+            marker_color="#0ea5e9",
+            text=grouped["repair_amount_display"].map(lambda value: f"{value:,.2f}"),
+            textposition="outside",
+            hovertemplate=f"%{{x}}<br>Repair amount: %{{y:,.2f}} {unit}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=grouped["project_dimension"],
+            y=grouped["cumulative_share"],
+            name="Cumulative %",
+            yaxis="y2",
+            mode="lines+markers+text",
+            line={"color": "#f97316", "width": 3},
+            marker={"size": 8},
+            text=grouped["cumulative_share"].map(lambda value: f"{value:.0%}"),
+            textposition="top center",
+            hovertemplate="%{x}<br>Cumulative share: %{y:.2%}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=f"Repair Amount Pareto ({unit})",
+        xaxis_title="Project / Dimension / Type",
+        yaxis_title=f"Repair Amount ({unit})",
+        yaxis2={"title": "Cumulative Share", "overlaying": "y", "side": "right", "tickformat": ".0%", "range": [0, 1.05]},
+        legend_title_text="",
+    )
+    fig.update_xaxes(tickangle=35)
+    return fig
+
+
+def status_comparison(df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    data = df.copy()
+    grouped = (
+        data.groupby("project_status", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+        .sort_values("project_status")
+    )
+    denominator_m = (grouped["repaired_spiral_length"] * METERS_PER_FOOT).where(grouped["repaired_spiral_length"] != 0)
+    grouped["repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
+    grouped["repair_ratio_incl_skelp"] = (grouped["total_repair_amount_incl_skelp"] / denominator_m).fillna(0)
+    grouped["repair_amount_display"] = amount_in_display_unit(grouped["total_repair_amount"], display_unit)
+    long = grouped.melt(
+        id_vars=["project_status", "repair_amount_display"],
+        value_vars=["repair_ratio", "repair_ratio_incl_skelp"],
+        var_name="metric",
+        value_name="ratio",
+    )
+    long["metric"] = long["metric"].map(
+        {"repair_ratio": "Repair Ratio", "repair_ratio_incl_skelp": "Repair Ratio incl. Skelp"}
+    )
+    fig = px.bar(
+        long,
+        x="project_status",
+        y="ratio",
+        color="metric",
+        barmode="group",
+        text=long["ratio"].map(lambda value: f"{value:.2%}"),
+        title="Completed vs In Progress Quality",
+        color_discrete_sequence=["#2563eb", "#dc2626"],
+        custom_data=["repair_amount_display"],
+    )
+    fig.update_layout(xaxis_title="Status", yaxis_title="Weighted Repair Ratio", legend_title_text="")
+    fig.update_yaxes(tickformat=".2%")
+    fig.update_traces(
+        textposition="outside",
+        hovertemplate="%{x}<br>%{fullData.name}: %{y:.2%}<br>" + f"Repair amount: %{{customdata[0]:,.2f}} {unit}<extra></extra>",
+    )
+    return fig
+
+
+def historical_benchmark_comparison(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    data = df.copy()
+    rows = []
+    if not data.empty:
+        denominator_m = data["repaired_spiral_length"].sum() * METERS_PER_FOOT
+        rows.append(
+            {
+                "group": "Selected Active Projects",
+                "repair_ratio": data["total_repair_amount"].sum() / denominator_m if denominator_m else 0,
+                "repair_ratio_incl_skelp": data["total_repair_amount_incl_skelp"].sum() / denominator_m if denominator_m else 0,
+            }
+        )
+    if baseline_df is not None and not baseline_df.empty:
+        denominator_m = baseline_df["repaired_spiral_length"].sum() * METERS_PER_FOOT
+        rows.append(
+            {
+                "group": "Historical Completed Baseline",
+                "repair_ratio": baseline_df["total_repair_amount"].sum() / denominator_m if denominator_m else 0,
+                "repair_ratio_incl_skelp": baseline_df["total_repair_amount_incl_skelp"].sum() / denominator_m if denominator_m else 0,
+            }
+        )
+    benchmark = pd.DataFrame(rows)
+    if benchmark.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Historical Benchmark Comparison")
+        return fig
+    long = benchmark.melt(id_vars="group", value_vars=["repair_ratio", "repair_ratio_incl_skelp"], var_name="metric", value_name="ratio")
+    long["metric"] = long["metric"].map(
+        {"repair_ratio": "Repair Ratio", "repair_ratio_incl_skelp": "Repair Ratio incl. Skelp"}
+    )
+    fig = px.bar(
+        long,
+        x="group",
+        y="ratio",
+        color="metric",
+        barmode="group",
+        text=long["ratio"].map(lambda value: f"{value:.2%}"),
+        title="Historical Benchmark Comparison",
+        color_discrete_sequence=["#2563eb", "#dc2626"],
+    )
+    fig.update_layout(xaxis_title="", yaxis_title="Weighted Repair Ratio", legend_title_text="")
+    fig.update_yaxes(tickformat=".2%")
+    fig.update_traces(textposition="outside", hovertemplate="%{x}<br>%{fullData.name}: %{y:.2%}<extra></extra>")
+    return fig
+
+
+def pipe_worst_ratio(pipe_df: pd.DataFrame):
+    data = pipe_df.nlargest(15, "repair_ratio").copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Worst Pipes by Repair Ratio")
+        return fig
+    data["pipe_label"] = data["project_sheet"] + " | Pipe " + data["pipe_no"].astype(str)
+    fig = px.bar(
+        data.sort_values("repair_ratio"),
+        x="repair_ratio",
+        y="pipe_label",
+        orientation="h",
+        color="repair_amount",
+        color_continuous_scale="Reds",
+        text=data.sort_values("repair_ratio")["repair_ratio"].map(lambda value: f"{value:.2%}"),
+        title="Worst Pipes by Repair Ratio",
+    )
+    fig.update_layout(xaxis_title="Repair Ratio", yaxis_title="Project / Pipe", coloraxis_colorbar_title="Repair Amount (m)")
+    fig.update_xaxes(tickformat=".2%")
+    fig.update_traces(textposition="outside")
+    return fig
+
+
+def pipe_repair_amount_pareto(pipe_df: pd.DataFrame):
+    data = pipe_df.copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Pipe Repair Amount Pareto")
+        return fig
+    data["pipe_label"] = data["project_sheet"] + " | Pipe " + data["pipe_no"].astype(str)
+    grouped = (
+        data.groupby("pipe_label", as_index=False)
+        .agg(repair_amount=("repair_amount", "sum"), repair_ratio=("repair_ratio", "max"))
+        .sort_values("repair_amount", ascending=False)
+    )
+    total = grouped["repair_amount"].sum()
+    top = grouped.head(20).copy()
+    top["cumulative_share"] = top["repair_amount"].cumsum() / total if total else 0
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=top["pipe_label"],
+            y=top["repair_amount"],
+            name="Repair Amount",
+            marker_color="#0ea5e9",
+            text=top["repair_amount"].map(lambda value: f"{value:,.2f}"),
+            textposition="outside",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=top["pipe_label"],
+            y=top["cumulative_share"],
+            yaxis="y2",
+            name="Cumulative %",
+            mode="lines+markers+text",
+            line={"color": "#f97316", "width": 3},
+            text=top["cumulative_share"].map(lambda value: f"{value:.0%}"),
+            textposition="top center",
+        )
+    )
+    fig.update_layout(
+        title="Pipe Repair Amount Pareto",
+        xaxis_title="Project / Pipe",
+        yaxis_title="Repair Amount (m)",
+        yaxis2={"title": "Cumulative Share", "overlaying": "y", "side": "right", "tickformat": ".0%", "range": [0, 1.05]},
+        legend_title_text="",
+    )
+    fig.update_xaxes(tickangle=35)
+    return fig
+
+
+def pipe_category_distribution(pipe_df: pd.DataFrame):
+    data = pipe_df.copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Pipe Repair Category Distribution")
+        return fig
+    grouped = (
+        data.groupby("repair_category", as_index=False)
+        .agg(repair_amount=("repair_amount", "sum"), pipes=("pipe_no", "count"))
+        .sort_values("repair_amount", ascending=False)
+        .head(12)
+    )
+    fig = px.bar(
+        grouped,
+        x="repair_category",
+        y="repair_amount",
+        color="pipes",
+        color_continuous_scale="Viridis",
+        text=grouped["repair_amount"].map(lambda value: f"{value:,.2f}"),
+        title="Pipe Repair Category Distribution",
+    )
+    fig.update_layout(xaxis_title="Repair Category", yaxis_title="Repair Amount (m)", coloraxis_colorbar_title="Pipe Count")
+    fig.update_traces(textposition="outside")
+    return fig
+
+
+def pipe_project_outlier_scatter(pipe_df: pd.DataFrame):
+    data = pipe_df.copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Pipe-Level Outlier Map")
+        return fig
+    fig = px.scatter(
+        data,
+        x="pipe_no",
+        y="repair_ratio",
+        size="repair_amount",
+        color="project_sheet",
+        hover_data=["repair_amount", "repair_category", "block_cell"],
+        title="Pipe-Level Outlier Map",
+    )
+    fig.update_layout(xaxis_title="Pipe No.", yaxis_title="Repair Ratio", legend_title_text="Project")
+    fig.update_yaxes(tickformat=".2%")
     return fig
 
 

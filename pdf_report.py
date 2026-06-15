@@ -12,7 +12,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A3, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from calculations import (
     METERS_PER_FOOT,
@@ -159,10 +159,13 @@ def _dimension_chart(daily: pd.DataFrame):
     return _figure_to_image(fig)
 
 
-def _production_type_chart(daily: pd.DataFrame):
-    daily = apply_meter_based_repair_ratios(daily)
+def _production_type_chart(daily: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    daily = daily.copy()
     if "production_type" not in daily.columns:
         daily["production_type"] = "Coil"
+    if baseline_df is not None and not baseline_df.empty:
+        daily = pd.concat([daily, baseline_df], ignore_index=True, sort=False)
+    daily = apply_meter_based_repair_ratios(daily)
     grouped = (
         daily.groupby("production_type", as_index=False)
         .agg(
@@ -191,6 +194,140 @@ def _production_type_chart(daily: pd.DataFrame):
     ax.set_xticklabels(grouped["production_type"])
     _style_axes(ax, "Production Type Repair Ratio", y_percent=True)
     ax.legend(fontsize=7.6, loc="best", frameon=True, framealpha=0.9)
+    return _figure_to_image(fig)
+
+
+def _status_chart(daily: pd.DataFrame):
+    daily = apply_meter_based_repair_ratios(daily)
+    grouped = (
+        daily.groupby("project_status", as_index=False)
+        .agg(
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+        .sort_values("project_status")
+    )
+    denominator_m = (grouped["repaired_spiral_length"] * METERS_PER_FOOT).where(grouped["repaired_spiral_length"] != 0)
+    grouped["repair_ratio"] = (grouped["total_repair_amount"] / denominator_m).fillna(0)
+    grouped["repair_ratio_incl_skelp"] = (grouped["total_repair_amount_incl_skelp"] / denominator_m).fillna(0)
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    x_positions = range(len(grouped))
+    width = 0.34
+    bars_a = ax.bar([x - width / 2 for x in x_positions], grouped["repair_ratio"], width=width, color="#2563eb", label="Repair Ratio")
+    bars_b = ax.bar([x + width / 2 for x in x_positions], grouped["repair_ratio_incl_skelp"], width=width, color="#dc2626", label="Repair Ratio incl. Skelp")
+    ax.bar_label(bars_a, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=4, fontsize=7.4, fontweight="bold")
+    ax.bar_label(bars_b, labels=[_pct(value) for value in grouped["repair_ratio_incl_skelp"]], padding=4, fontsize=7.4, fontweight="bold")
+    max_value = grouped[["repair_ratio", "repair_ratio_incl_skelp"]].max().max()
+    ax.set_ylim(0, max_value * 1.3 if pd.notna(max_value) and max_value else 1)
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(grouped["project_status"])
+    _style_axes(ax, "Completed vs In Progress Quality", y_percent=True)
+    ax.legend(fontsize=7.2, loc="best", frameon=True, framealpha=0.9)
+    return _figure_to_image(fig)
+
+
+def _benchmark_chart(daily: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    rows = []
+    if not daily.empty:
+        denominator_m = daily["repaired_spiral_length"].sum() * METERS_PER_FOOT
+        rows.append(
+            {
+                "group": "Selected Active",
+                "repair_ratio": daily["total_repair_amount"].sum() / denominator_m if denominator_m else 0,
+                "repair_ratio_incl_skelp": daily["total_repair_amount_incl_skelp"].sum() / denominator_m if denominator_m else 0,
+            }
+        )
+    if baseline_df is not None and not baseline_df.empty:
+        denominator_m = baseline_df["repaired_spiral_length"].sum() * METERS_PER_FOOT
+        rows.append(
+            {
+                "group": "Historical Baseline",
+                "repair_ratio": baseline_df["total_repair_amount"].sum() / denominator_m if denominator_m else 0,
+                "repair_ratio_incl_skelp": baseline_df["total_repair_amount_incl_skelp"].sum() / denominator_m if denominator_m else 0,
+            }
+        )
+    grouped = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    if grouped.empty:
+        _style_axes(ax, "Historical Benchmark Comparison", y_percent=True)
+        return _figure_to_image(fig)
+    x_positions = range(len(grouped))
+    width = 0.34
+    bars_a = ax.bar([x - width / 2 for x in x_positions], grouped["repair_ratio"], width=width, color="#2563eb", label="Repair Ratio")
+    bars_b = ax.bar([x + width / 2 for x in x_positions], grouped["repair_ratio_incl_skelp"], width=width, color="#dc2626", label="Repair Ratio incl. Skelp")
+    ax.bar_label(bars_a, labels=[_pct(value) for value in grouped["repair_ratio"]], padding=4, fontsize=7.4, fontweight="bold")
+    ax.bar_label(bars_b, labels=[_pct(value) for value in grouped["repair_ratio_incl_skelp"]], padding=4, fontsize=7.4, fontweight="bold")
+    max_value = grouped[["repair_ratio", "repair_ratio_incl_skelp"]].max().max()
+    ax.set_ylim(0, max_value * 1.3 if pd.notna(max_value) and max_value else 1)
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(grouped["group"])
+    _style_axes(ax, "Historical Benchmark Comparison", y_percent=True)
+    ax.legend(fontsize=7.2, loc="best", frameon=True, framealpha=0.9)
+    return _figure_to_image(fig)
+
+
+def _skelp_impact_chart(daily: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    daily = apply_meter_based_repair_ratios(daily).copy()
+    if "production_type" not in daily.columns:
+        daily["production_type"] = "Coil"
+    daily["project_dimension"] = daily["project_no"] + " | " + daily["dimensions"] + " | " + daily["production_type"]
+    daily["extra_repair_display"] = amount_in_display_unit(daily["total_repair_amount_incl_skelp"] - daily["total_repair_amount"], display_unit)
+    grouped = (
+        daily.groupby("project_dimension", as_index=False)
+        .agg(
+            extra_repair=("total_repair_amount_incl_skelp", "sum"),
+            repair_amount=("total_repair_amount", "sum"),
+            extra_repair_display=("extra_repair_display", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+    )
+    denominator_m = (grouped["repaired_spiral_length"] * METERS_PER_FOOT).where(grouped["repaired_spiral_length"] != 0)
+    grouped["skelp_impact"] = ((grouped["extra_repair"] - grouped["repair_amount"]) / denominator_m).fillna(0)
+    grouped = grouped.sort_values("skelp_impact", ascending=False).head(10).sort_values("skelp_impact")
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    bars = ax.barh(grouped["project_dimension"], grouped["skelp_impact"], color="#f97316")
+    ax.bar_label(bars, labels=[f"+{value:.2%}" for value in grouped["skelp_impact"]], padding=4, fontsize=7.2, fontweight="bold")
+    max_value = grouped["skelp_impact"].max()
+    ax.set_xlim(0, max_value * 1.25 if pd.notna(max_value) and max_value else 1)
+    ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
+    _style_axes(ax, f"Skelp Impact Analysis - extra repair shown in {unit}")
+    ax.tick_params(axis="y", labelsize=6.8)
+    return _figure_to_image(fig)
+
+
+def _pareto_chart(daily: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    daily = daily.copy()
+    if "production_type" not in daily.columns:
+        daily["production_type"] = "Coil"
+    daily["project_dimension"] = daily["project_no"] + " | " + daily["dimensions"] + " | " + daily["production_type"]
+    daily["repair_amount_display"] = amount_in_display_unit(daily["total_repair_amount"], display_unit)
+    grouped_all = (
+        daily.groupby("project_dimension", as_index=False)
+        .agg(repair_amount_display=("repair_amount_display", "sum"))
+        .sort_values("repair_amount_display", ascending=False)
+    )
+    total = grouped_all["repair_amount_display"].sum()
+    grouped = grouped_all.head(10).copy()
+    grouped["cumulative_share"] = grouped["repair_amount_display"].cumsum() / total if total else 0
+    fig, ax1 = plt.subplots(figsize=CHART_FIGSIZE)
+    x_positions = range(len(grouped))
+    bars = ax1.bar(x_positions, grouped["repair_amount_display"], color="#0ea5e9", label="Repair Amount")
+    ax1.bar_label(bars, labels=[_short_num(value) for value in grouped["repair_amount_display"]], padding=3, fontsize=6.8, fontweight="bold")
+    ax1.set_ylabel(f"Repair Amount ({unit})", fontsize=8)
+    ax2 = ax1.twinx()
+    ax2.plot(x_positions, grouped["cumulative_share"], color="#f97316", linewidth=2.4, marker="o", label="Cumulative %")
+    for x_value, value in zip(x_positions, grouped["cumulative_share"]):
+        ax2.annotate(f"{value:.0%}", (x_value, value), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=6.8, color="#c2410c", fontweight="bold")
+    ax2.set_ylim(0, 1.05)
+    ax2.yaxis.set_major_formatter(lambda value, _: f"{value:.0%}")
+    ax2.set_ylabel("Cumulative Share", fontsize=8)
+    ax1.set_xticks(list(x_positions))
+    ax1.set_xticklabels(grouped["project_dimension"], rotation=35, ha="right", fontsize=6.4)
+    _style_axes(ax1, f"Repair Amount Pareto ({unit})")
+    ax2.spines["top"].set_visible(False)
     return _figure_to_image(fig)
 
 
@@ -353,7 +490,7 @@ def build_a3_pdf_report(
                 _worst_projects_chart(df, report_date),
             ],
             [
-                _production_type_chart(daily),
+                _production_type_chart(daily, baseline_df),
                 _amount_chart(df, display_unit),
             ],
         ],
@@ -373,6 +510,34 @@ def build_a3_pdf_report(
         )
     )
     story.extend([Spacer(1, 0.2 * cm), chart_grid])
+
+    drilldown_grid = Table(
+        [
+            [
+                _skelp_impact_chart(daily, display_unit),
+                _pareto_chart(daily, display_unit),
+            ],
+            [
+                _status_chart(daily),
+                _benchmark_chart(daily, baseline_df),
+            ],
+        ],
+        colWidths=[20.4 * cm, 20.4 * cm],
+        rowHeights=[7.6 * cm, 7.6 * cm],
+    )
+    drilldown_grid.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+    story.extend([PageBreak(), Paragraph("Quality Drilldown", section_style), drilldown_grid])
 
     worst = daily.nlargest(12, "repair_ratio")[
         [

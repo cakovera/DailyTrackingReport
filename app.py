@@ -4,18 +4,21 @@ import pandas as pd
 import streamlit as st
 
 import charts
-from calculations import amount_in_display_unit, apply_meter_based_repair_ratios, length_in_display_unit, unit_label
+from calculations import METERS_PER_FOOT, amount_in_display_unit, apply_meter_based_repair_ratios, length_in_display_unit, unit_label
 from database import (
     DB_PATH,
     get_backend_name,
     get_existing_keys,
     load_historical_baselines,
     load_master_data,
+    load_pipe_repair_details,
+    upsert_pipe_repair_details,
     upsert_historical_baselines,
     upsert_repair_rates,
 )
 from parser import parse_daily_repair_rate
 from pdf_report import build_a3_pdf_report
+from project_parser import parse_project_pipe_repairs
 from validators import mark_duplicate_counts
 
 
@@ -79,6 +82,11 @@ with st.sidebar:
 
 if uploaded is not None:
     parsed_df, report = parse_daily_repair_rate(uploaded)
+    uploaded.seek(0)
+    project_pipe_df = pd.DataFrame()
+    project_pipe_report = None
+    if not parsed_df.empty:
+        project_pipe_df, project_pipe_report = parse_project_pipe_repairs(uploaded, parsed_df["date"].iloc[0])
     if not parsed_df.empty:
         existing_keys = get_existing_keys(parsed_df)
         report = mark_duplicate_counts(existing_keys, parsed_df, report)
@@ -99,16 +107,35 @@ if uploaded is not None:
     else:
         st.success("Validation başarılı. Import için onay bekleniyor.")
         st.dataframe(format_preview(parsed_df, display_unit), use_container_width=True)
+        if project_pipe_report is not None:
+            st.subheader("Project Sheet Pipe-Level Preview")
+            pc1, pc2, pc3 = st.columns(3)
+            pc1.metric("Parsed pipe rows", project_pipe_report.parsed_rows)
+            pc2.metric("Parsed project sheets", project_pipe_report.parsed_sheets)
+            pc3.metric("Skipped blocks", project_pipe_report.skipped_blocks)
+            for warning in project_pipe_report.warnings:
+                st.warning(warning)
+            if not project_pipe_df.empty:
+                st.dataframe(project_pipe_df.head(100), use_container_width=True)
         if st.button("Confirm Import", type="primary"):
             try:
                 affected = upsert_repair_rates(parsed_df)
+                pipe_affected = 0
+                if not project_pipe_df.empty:
+                    try:
+                        pipe_affected = upsert_pipe_repair_details(project_pipe_df)
+                    except Exception as pipe_exc:
+                        st.warning("Repair import tamamlandı; pipe-level kayıtlar yazılamadı.")
+                        st.info("Supabase kullanıyorsanız supabase_pipe_repair_details.sql dosyasını SQL Editor'da çalıştırın.")
+                        st.code(str(pipe_exc), language="text")
                 st.session_state.last_import_summary = {
                     "affected": affected,
+                    "pipe_affected": pipe_affected,
                     "updated": report.update_rows,
                     "inserted": report.insert_rows,
                     "date": parsed_df["date"].iloc[0],
                 }
-                st.success(f"Import tamamlandı. {affected} satır işlendi.")
+                st.success(f"Import tamamlandı. {affected} repair satırı ve {pipe_affected} pipe-level kayıt işlendi.")
             except Exception as exc:
                 st.error("Import sırasında database yazma hatası oluştu. Master data güncellenmedi.")
                 st.info("Supabase kullanıyorsanız RLS insert/update policy veya service-role key ayarı gerekir.")
@@ -138,7 +165,8 @@ if st.session_state.last_import_summary:
     st.success(
         "Son import: "
         f"{summary['date']} için {summary['affected']} satır işlendi "
-        f"({summary['inserted']} yeni, {summary['updated']} update)."
+        f"({summary['inserted']} yeni, {summary['updated']} update). "
+        f"Pipe-level: {summary.get('pipe_affected', 0)}."
     )
 
 st.divider()
@@ -146,6 +174,7 @@ st.divider()
 try:
     master_df = load_master_data()
     baseline_master_df = load_historical_baselines()
+    pipe_master_df = load_pipe_repair_details()
 except Exception as exc:
     st.error("Database bağlantısı kurulamadı veya Supabase tablosu hazır değil.")
     st.info("Supabase kullanıyorsanız önce SQL Editor içinde supabase_setup.sql dosyasındaki script'i çalıştırın.")
@@ -167,14 +196,6 @@ selected_production_type = st.multiselect("Production Type Filter", type_options
 filtered = master_df[master_df["project_status"].isin(selected_status)] if selected_status else master_df
 filtered = filtered[filtered["production_type"].isin(selected_production_type)] if selected_production_type else filtered
 filtered = apply_meter_based_repair_ratios(filtered)
-baseline_for_filtered = baseline_master_df
-if selected_production_type and set(selected_production_type) != set(type_options):
-    if "production_type" in baseline_for_filtered.columns:
-        baseline_for_filtered = baseline_for_filtered[
-            baseline_for_filtered["production_type"].isin(selected_production_type)
-        ]
-    else:
-        baseline_for_filtered = pd.DataFrame()
 
 if filtered.empty:
     st.warning("Seçili filtrelerle veri bulunamadı.")
@@ -184,6 +205,51 @@ available_dates = sorted(filtered["date"].dt.date.unique())
 selected_date = st.selectbox("Date", available_dates, index=len(available_dates) - 1)
 selected_date_df = filtered[filtered["date"].dt.date == selected_date].copy()
 filtered_to_selected_date = filtered[filtered["date"].dt.date <= selected_date].copy()
+baseline_for_filtered = baseline_master_df.copy()
+if not baseline_for_filtered.empty:
+    baseline_type_filter = selected_production_type or type_options
+    baseline_for_filtered = baseline_for_filtered[
+        baseline_for_filtered["reporting_year"].eq(selected_date.year)
+        & baseline_for_filtered["production_type"].isin(baseline_type_filter)
+        & baseline_for_filtered["include_in_dashboard"]
+    ].copy()
+selected_pipe_df = (
+    pipe_master_df[pipe_master_df["date"].dt.date == selected_date].copy()
+    if not pipe_master_df.empty and "date" in pipe_master_df.columns
+    else pd.DataFrame()
+)
+
+if "production_type" in selected_date_df.columns and not selected_date_df.empty:
+    st.subheader("Production Type KPIs")
+    production_type_source = pd.concat(
+        [selected_date_df, baseline_for_filtered],
+        ignore_index=True,
+        sort=False,
+    )
+    type_summary = (
+        production_type_source.groupby("production_type", as_index=False)
+        .agg(
+            projects=("project_no", "count"),
+            total_repair_amount=("total_repair_amount", "sum"),
+            total_repair_amount_incl_skelp=("total_repair_amount_incl_skelp", "sum"),
+            repaired_spiral_length=("repaired_spiral_length", "sum"),
+        )
+        .sort_values("production_type")
+    )
+    type_cols = st.columns(len(type_summary))
+    for col, (_, row) in zip(type_cols, type_summary.iterrows()):
+        denominator_m = row["repaired_spiral_length"] * METERS_PER_FOOT
+        weighted_ratio = row["total_repair_amount"] / denominator_m if denominator_m else 0
+        skelp_impact = (row["total_repair_amount_incl_skelp"] - row["total_repair_amount"]) / denominator_m if denominator_m else 0
+        col.metric(
+            f"{row['production_type']} Repair Ratio",
+            f"{weighted_ratio:.2%}",
+            f"Skelp impact +{skelp_impact:.2%}",
+        )
+        col.caption(
+            f"{int(row['projects'])} rows | "
+            f"{amount_in_display_unit(row['total_repair_amount'], display_unit):,.2f} {unit_label(display_unit)} repair"
+        )
 
 st.download_button(
     "Download Selected Date CSV",
@@ -221,9 +287,39 @@ with right:
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.production_type_analysis(selected_date_df), use_container_width=True)
+    st.plotly_chart(
+        charts.production_type_analysis(selected_date_df, baseline_for_filtered),
+        use_container_width=True,
+    )
 with right:
     st.plotly_chart(charts.dimension_analysis(selected_date_df), use_container_width=True)
+
+left, right = st.columns(2)
+with left:
+    st.plotly_chart(charts.status_comparison(selected_date_df, display_unit), use_container_width=True)
+with right:
+    st.plotly_chart(charts.historical_benchmark_comparison(selected_date_df, baseline_for_filtered), use_container_width=True)
+
+left, right = st.columns(2)
+with left:
+    st.plotly_chart(charts.skelp_impact_analysis(selected_date_df, display_unit), use_container_width=True)
+with right:
+    st.plotly_chart(charts.repair_amount_pareto(selected_date_df, display_unit), use_container_width=True)
+
+if not selected_pipe_df.empty:
+    st.subheader("Pipe-Level Repair Detail")
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(charts.pipe_worst_ratio(selected_pipe_df), use_container_width=True)
+    with right:
+        st.plotly_chart(charts.pipe_repair_amount_pareto(selected_pipe_df), use_container_width=True)
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(charts.pipe_category_distribution(selected_pipe_df), use_container_width=True)
+    with right:
+        st.plotly_chart(charts.pipe_project_outlier_scatter(selected_pipe_df), use_container_width=True)
+else:
+    st.info("Pipe-level project sheet data is not loaded for the selected date.")
 
 st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 

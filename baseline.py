@@ -14,6 +14,41 @@ BASELINE_COLUMNS = [
     "total_repair_amount_incl_skelp",
 ]
 
+# Legacy baseline rows predate explicit year/type columns. These assignments
+# mirror the Annual Repair Rates sections in the controlled Excel workbook.
+LEGACY_BASELINE_ASSIGNMENTS = {
+    "05-092": {"reporting_year": 2025, "production_type": "Coil"},
+    # This project is present in the current Plate table, so retaining its old
+    # baseline row would count the same repair amount and spiral length twice.
+    "12-112": {"reporting_year": 2026, "production_type": "Plate", "include_in_dashboard": False},
+}
+
+
+def enrich_historical_baseline_metadata(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        return out
+
+    if "reporting_year" not in out.columns:
+        out["reporting_year"] = pd.NA
+    if "production_type" not in out.columns:
+        out["production_type"] = pd.NA
+    if "include_in_dashboard" not in out.columns:
+        out["include_in_dashboard"] = True
+
+    normalized_projects = out["project_no"].astype(str).str.strip()
+    for project_no, assignment in LEGACY_BASELINE_ASSIGNMENTS.items():
+        mask = normalized_projects.eq(project_no)
+        out.loc[mask & out["reporting_year"].isna(), "reporting_year"] = assignment["reporting_year"]
+        out.loc[mask & out["production_type"].isna(), "production_type"] = assignment["production_type"]
+        if "include_in_dashboard" in assignment:
+            out.loc[mask, "include_in_dashboard"] = assignment["include_in_dashboard"]
+
+    out["reporting_year"] = pd.to_numeric(out["reporting_year"], errors="coerce").fillna(2026).astype(int)
+    out["production_type"] = out["production_type"].fillna("Coil").astype(str).str.strip().replace("", "Coil")
+    out["include_in_dashboard"] = out["include_in_dashboard"].fillna(True).astype(bool)
+    return out
+
 
 def parse_historical_baseline_csv(file: BinaryIO) -> tuple[pd.DataFrame, list[str]]:
     df = pd.read_csv(file)
@@ -26,6 +61,10 @@ def parse_historical_baseline_csv(file: BinaryIO) -> tuple[pd.DataFrame, list[st
         df["dimensions"] = "Historical Baseline"
     if "project_status" not in df.columns:
         df["project_status"] = "Completed"
+    if "reporting_year" not in df.columns:
+        df["reporting_year"] = pd.NA
+    if "production_type" not in df.columns:
+        df["production_type"] = pd.NA
 
     df = df[
         [
@@ -35,6 +74,8 @@ def parse_historical_baseline_csv(file: BinaryIO) -> tuple[pd.DataFrame, list[st
             "total_repair_amount",
             "total_repair_amount_incl_skelp",
             "project_status",
+            "reporting_year",
+            "production_type",
         ]
     ].copy()
     df["project_no"] = df["project_no"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
@@ -64,6 +105,7 @@ def parse_historical_baseline_csv(file: BinaryIO) -> tuple[pd.DataFrame, list[st
     if errors:
         return df, errors
 
+    df = enrich_historical_baseline_metadata(df)
     denominator_m = df["repaired_spiral_length"] * METERS_PER_FOOT
     df["repair_ratio"] = df["total_repair_amount"] / denominator_m
     df["repair_ratio_incl_skelp"] = df["total_repair_amount_incl_skelp"] / denominator_m
@@ -72,6 +114,7 @@ def parse_historical_baseline_csv(file: BinaryIO) -> tuple[pd.DataFrame, list[st
 
 def baseline_template_csv() -> str:
     return (
-        "project_no,dimensions,repaired_spiral_length,total_repair_amount,total_repair_amount_incl_skelp,project_status\n"
-        "05-092,Historical Baseline,26035.18,332.55,965.55,Completed\n"
+        "project_no,dimensions,repaired_spiral_length,total_repair_amount,total_repair_amount_incl_skelp,"
+        "project_status,reporting_year,production_type\n"
+        "05-092,Historical Baseline,26035.18,332.55,965.55,Completed,2025,Coil\n"
     )
