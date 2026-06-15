@@ -452,6 +452,69 @@ def pipe_project_outlier_scatter(pipe_df: pd.DataFrame):
     return fig
 
 
+def pipe_joint_count_distribution(pipe_df: pd.DataFrame):
+    data = pipe_df[pipe_df["repair_count"].notna()].copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Bant Eki Adedi Dağılımı")
+        return fig
+    data["repair_count"] = data["repair_count"].astype(int)
+    grouped = (
+        data.groupby("repair_count", as_index=False)
+        .agg(pipe_count=("pipe_no", "count"), repair_amount=("repair_amount", "sum"))
+        .sort_values("repair_count")
+    )
+    fig = px.bar(
+        grouped,
+        x="repair_count",
+        y="pipe_count",
+        color="repair_amount",
+        color_continuous_scale="Blues",
+        text="pipe_count",
+        title="Bant Eki Adedi Dağılımı",
+    )
+    fig.update_layout(
+        xaxis_title="Boru Başına Bant Eki Adedi",
+        yaxis_title="Boru Sayısı",
+        coloraxis_colorbar_title="Repair Amount (m)",
+    )
+    fig.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "Bant eki: %{x}<br>"
+            "Boru sayısı: %{y}<br>"
+            "Toplam repair: %{marker.color:,.2f} m<extra></extra>"
+        ),
+    )
+    return fig
+
+
+def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame):
+    data = pipe_df[pipe_df["repair_count"].notna()].copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Bant Eki Adedi ve Repair Amount")
+        return fig
+    data["pipe_label"] = "Pipe " + data["pipe_no"].astype(str)
+    fig = px.scatter(
+        data,
+        x="repair_count",
+        y="repair_amount",
+        size="repair_amount",
+        color="repair_ratio",
+        color_continuous_scale="Turbo",
+        hover_name="pipe_label",
+        title="Bant Eki Adedi ve Repair Amount",
+    )
+    fig.update_layout(
+        xaxis_title="Bant Eki Adedi",
+        yaxis_title="Repair Amount (m)",
+        coloraxis_colorbar_title="Repair Ratio",
+    )
+    fig.update_coloraxes(colorbar_tickformat=".2%")
+    return fig
+
+
 def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     grouped = repair_amount_trend_data(df, display_unit)

@@ -318,6 +318,8 @@ def load_pipe_repair_details(conn: sqlite3.Connection | None = None) -> pd.DataF
 
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
+        placeholder_mask = pd.to_numeric(df["repair_amount"], errors="coerce").le(0.0001)
+        df.loc[placeholder_mask, ["repair_amount", "repair_ratio"]] = 0.0
     return df
 
 

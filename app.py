@@ -22,6 +22,7 @@ upsert_repair_rates = db.upsert_repair_rates
 # prevent the core repair-rate dashboard from starting.
 try:
     from project_parser import parse_project_pipe_repairs
+    from pipe_analysis import reconcile_pipe_projects
 
     load_pipe_repair_details = db.load_pipe_repair_details
     upsert_pipe_repair_details = db.upsert_pipe_repair_details
@@ -321,18 +322,73 @@ with left:
 with right:
     st.plotly_chart(charts.repair_amount_pareto(selected_date_df, display_unit), use_container_width=True)
 
-if not selected_pipe_df.empty:
-    st.subheader("Pipe-Level Repair Detail")
-    left, right = st.columns(2)
-    with left:
-        st.plotly_chart(charts.pipe_worst_ratio(selected_pipe_df), use_container_width=True)
-    with right:
-        st.plotly_chart(charts.pipe_repair_amount_pareto(selected_pipe_df), use_container_width=True)
-    left, right = st.columns(2)
-    with left:
-        st.plotly_chart(charts.pipe_category_distribution(selected_pipe_df), use_container_width=True)
-    with right:
-        st.plotly_chart(charts.pipe_project_outlier_scatter(selected_pipe_df), use_container_width=True)
+if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
+    reconciled_projects = reconcile_pipe_projects(selected_date_df, selected_pipe_df)
+    st.subheader("Project Pipe Analysis")
+    if reconciled_projects.empty:
+        st.warning(
+            "Pipe-level totals do not uniquely reconcile with the selected date project totals. "
+            "Project Pareto charts were not generated."
+        )
+    else:
+        project_labels = {
+            row["project_sheet"]: f"{row['project_no']} | {row['dimensions']}"
+            for _, row in reconciled_projects.iterrows()
+        }
+        selected_sheet = st.selectbox(
+            "Pipe Analysis Project",
+            reconciled_projects["project_sheet"].tolist(),
+            format_func=lambda sheet: project_labels[sheet],
+        )
+        reconciliation = reconciled_projects[
+            reconciled_projects["project_sheet"].eq(selected_sheet)
+        ].iloc[0]
+        project_pipe_df = selected_pipe_df[
+            selected_pipe_df["project_sheet"].eq(selected_sheet)
+        ].copy()
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Pipe Rows", int(reconciliation["pipe_rows"]))
+        k2.metric("Pipe Repair Total", f"{reconciliation['pipe_repair_amount']:,.2f} m")
+        k3.metric("Master Repair Total", f"{reconciliation['expected_repair_amount']:,.2f} m")
+        k4.metric("Joint Count Coverage", f"{reconciliation['joint_count_coverage']:.0%}")
+        st.success(
+            "Reconciliation passed. "
+            f"Difference: {reconciliation['difference_m']:+.4f} m."
+        )
+
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(charts.pipe_repair_amount_pareto(project_pipe_df), use_container_width=True)
+        with right:
+            st.plotly_chart(charts.pipe_worst_ratio(project_pipe_df), use_container_width=True)
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(charts.pipe_joint_count_distribution(project_pipe_df), use_container_width=True)
+        with right:
+            st.plotly_chart(charts.pipe_joint_count_vs_repair(project_pipe_df), use_container_width=True)
+
+        critical_pipes = (
+            project_pipe_df.nlargest(15, ["repair_amount", "repair_ratio"])[
+                ["pipe_no", "repair_amount", "repair_ratio", "repair_count", "surface_state"]
+            ]
+            .rename(
+                columns={
+                    "pipe_no": "Pipe No.",
+                    "repair_amount": "Repair Amount (m)",
+                    "repair_ratio": "Repair Ratio",
+                    "repair_count": "Bant Eki Adedi",
+                    "surface_state": "Surface State",
+                }
+            )
+        )
+        st.dataframe(
+            critical_pipes.style.format(
+                {"Repair Amount (m)": "{:,.3f}", "Repair Ratio": "{:.2%}"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 else:
     st.info("Pipe-level project sheet data is not loaded for the selected date.")
 
