@@ -15,6 +15,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from calculations import amount_in_display_unit, unit_label
+
 
 CHART_DPI = 240
 CHART_SIZE = (9.6, 3.5)
@@ -41,27 +43,30 @@ def _image(fig) -> Image:
     return Image(buffer, width=19.8 * cm, height=7.0 * cm)
 
 
-def _pareto_chart(pipe_df: pd.DataFrame) -> Image:
+def _pareto_chart(pipe_df: pd.DataFrame, display_unit: str) -> Image:
+    unit = unit_label(display_unit)
+    data = pipe_df.copy()
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     grouped = (
-        pipe_df.groupby("pipe_no", as_index=False)
-        .agg(repair_amount=("repair_amount", "sum"))
-        .sort_values("repair_amount", ascending=False)
+        data.groupby("pipe_no", as_index=False)
+        .agg(repair_amount_display=("repair_amount_display", "sum"))
+        .sort_values("repair_amount_display", ascending=False)
     )
-    total = grouped["repair_amount"].sum()
+    total = grouped["repair_amount_display"].sum()
     top = grouped.head(20).copy()
-    top["cumulative_share"] = top["repair_amount"].cumsum() / total if total else 0
+    top["cumulative_share"] = top["repair_amount_display"].cumsum() / total if total else 0
 
     fig, ax1 = plt.subplots(figsize=CHART_SIZE)
     positions = range(len(top))
-    bars = ax1.bar(positions, top["repair_amount"], color="#0ea5e9")
+    bars = ax1.bar(positions, top["repair_amount_display"], color="#0ea5e9")
     ax1.bar_label(
         bars,
-        labels=[f"{value:.2f}" for value in top["repair_amount"]],
+        labels=[f"{value:.2f}" for value in top["repair_amount_display"]],
         padding=3,
         fontsize=6.8,
         fontweight="bold",
     )
-    ax1.set_ylabel("Repair Amount (m)", fontsize=8)
+    ax1.set_ylabel(f"Repair Amount ({unit})", fontsize=8)
     ax1.set_xticks(list(positions))
     ax1.set_xticklabels([f"Pipe {value}" for value in top["pipe_no"]], rotation=35, ha="right")
     _style_axes(ax1, "Pipe Repair Amount Pareto")
@@ -126,14 +131,16 @@ def _joint_distribution_chart(pipe_df: pd.DataFrame) -> Image:
     return _image(fig)
 
 
-def _joint_repair_chart(pipe_df: pd.DataFrame) -> Image:
+def _joint_repair_chart(pipe_df: pd.DataFrame, display_unit: str) -> Image:
+    unit = unit_label(display_unit)
     data = pipe_df[pipe_df["repair_count"].notna()].copy()
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     fig, ax = plt.subplots(figsize=CHART_SIZE)
     if not data.empty:
-        sizes = data["repair_amount"].clip(lower=0.05) * 16
+        sizes = data["repair_amount_display"].clip(lower=0.05) * 16
         scatter = ax.scatter(
             data["repair_count"],
-            data["repair_amount"],
+            data["repair_amount_display"],
             s=sizes,
             c=data["repair_ratio"],
             cmap="turbo",
@@ -145,7 +152,7 @@ def _joint_repair_chart(pipe_df: pd.DataFrame) -> Image:
         colorbar.ax.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
         colorbar.set_label("Repair Ratio", fontsize=8)
     ax.set_xlabel("Band Joint Count", fontsize=8)
-    ax.set_ylabel("Repair Amount (m)", fontsize=8)
+    ax.set_ylabel(f"Repair Amount ({unit})", fontsize=8)
     _style_axes(ax, "Band Joint Count vs Repair Amount")
     return _image(fig)
 
@@ -178,6 +185,7 @@ def build_project_pipe_pdf_report(
     pipe_df: pd.DataFrame,
     reconciliation: pd.Series,
     selected_date,
+    display_unit: str = "m",
 ) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -216,6 +224,7 @@ def build_project_pipe_pdf_report(
     )
 
     report_date = pd.to_datetime(selected_date).date()
+    unit = unit_label(display_unit)
     project_no = str(reconciliation["project_no"])
     dimensions = str(reconciliation["dimensions"])
     joint_coverage = float(reconciliation["joint_count_coverage"])
@@ -225,6 +234,12 @@ def build_project_pipe_pdf_report(
         if pipe_df["repair_amount"].sum()
         else 0
     )
+    pipe_total_display = amount_in_display_unit(pipe_df["repair_amount"].sum(), display_unit)
+    master_total_display = amount_in_display_unit(
+        float(reconciliation["expected_repair_amount"]),
+        display_unit,
+    )
+    difference_display = amount_in_display_unit(float(reconciliation["difference_m"]), display_unit)
 
     story = [
         Paragraph("Project Pipe Repair Analysis", title_style),
@@ -246,9 +261,9 @@ def build_project_pipe_pdf_report(
         ],
         [
             f"{len(pipe_df):,}",
-            f"{pipe_df['repair_amount'].sum():,.2f} m",
-            f"{float(reconciliation['expected_repair_amount']):,.2f} m",
-            f"{float(reconciliation['difference_m']):+.4f} m",
+            f"{pipe_total_display:,.2f} {unit}",
+            f"{master_total_display:,.2f} {unit}",
+            f"{difference_display:+.4f} {unit}",
             f"{joint_coverage:.0%} ({known_joint_rows:,}/{len(pipe_df):,})",
             f"{top_five_share:.1%}",
         ],
@@ -263,8 +278,8 @@ def build_project_pipe_pdf_report(
 
     chart_grid = Table(
         [
-            [_pareto_chart(pipe_df), _worst_ratio_chart(pipe_df)],
-            [_joint_distribution_chart(pipe_df), _joint_repair_chart(pipe_df)],
+            [_pareto_chart(pipe_df, display_unit), _worst_ratio_chart(pipe_df)],
+            [_joint_distribution_chart(pipe_df), _joint_repair_chart(pipe_df, display_unit)],
         ],
         colWidths=[20.4 * cm, 20.4 * cm],
         rowHeights=[7.5 * cm, 7.5 * cm],
@@ -284,13 +299,13 @@ def build_project_pipe_pdf_report(
     story.extend([Spacer(1, 0.2 * cm), chart_grid, PageBreak(), Paragraph("Critical Pipes", section_style)])
 
     critical = pipe_df.nlargest(30, ["repair_amount", "repair_ratio"])
-    rows = [["Pipe No.", "Repair Amount (m)", "Repair Ratio", "Band Joint Count", "Surface State"]]
+    rows = [["Pipe No.", f"Repair Amount ({unit})", "Repair Ratio", "Band Joint Count", "Surface State"]]
     for _, row in critical.iterrows():
         joint_count = "" if pd.isna(row["repair_count"]) else str(int(row["repair_count"]))
         rows.append(
             [
                 str(int(row["pipe_no"])),
-                f"{row['repair_amount']:,.3f}",
+                f"{amount_in_display_unit(row['repair_amount'], display_unit):,.3f}",
                 f"{row['repair_ratio']:.2%}",
                 joint_count,
                 str(row["surface_state"]),

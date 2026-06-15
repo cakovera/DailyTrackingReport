@@ -300,6 +300,8 @@ if baseline_for_filtered.empty:
 else:
     st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_for_filtered)} projects")
 
+st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
+
 left, right = st.columns(2)
 with left:
     st.plotly_chart(charts.worst_projects_today(selected_date_df, selected_date), use_container_width=True)
@@ -353,23 +355,37 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
         project_pipe_df = selected_pipe_df[
             selected_pipe_df["project_sheet"].eq(selected_sheet)
         ].copy()
+        project_unit = unit_label(display_unit)
+        pipe_total_display = amount_in_display_unit(
+            reconciliation["pipe_repair_amount"],
+            display_unit,
+        )
+        master_total_display = amount_in_display_unit(
+            reconciliation["expected_repair_amount"],
+            display_unit,
+        )
+        difference_display = amount_in_display_unit(
+            reconciliation["difference_m"],
+            display_unit,
+        )
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Pipe Rows", int(reconciliation["pipe_rows"]))
-        k2.metric("Pipe Repair Total", f"{reconciliation['pipe_repair_amount']:,.2f} m")
-        k3.metric("Master Repair Total", f"{reconciliation['expected_repair_amount']:,.2f} m")
+        k2.metric("Pipe Repair Total", f"{pipe_total_display:,.2f} {project_unit}")
+        k3.metric("Master Repair Total", f"{master_total_display:,.2f} {project_unit}")
         k4.metric("Joint Count Coverage", f"{reconciliation['joint_count_coverage']:.0%}")
         st.success(
             "Reconciliation passed. "
-            f"Difference: {reconciliation['difference_m']:+.4f} m."
+            f"Difference: {difference_display:+.4f} {project_unit}."
         )
-        project_report_key = f"{selected_date}|{selected_sheet}"
+        project_report_key = f"{selected_date}|{selected_sheet}|{display_unit}"
         if st.button("Generate Selected Project A3 PDF Report"):
             with st.spinner("Preparing project PDF report..."):
                 st.session_state.project_pdf_report = build_project_pipe_pdf_report(
                     project_pipe_df,
                     reconciliation,
                     selected_date,
+                    display_unit,
                 )
                 safe_project = "".join(
                     char if char.isalnum() or char in "-_" else "_"
@@ -392,23 +408,41 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
 
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(charts.pipe_repair_amount_pareto(project_pipe_df), use_container_width=True)
+            st.plotly_chart(
+                charts.pipe_repair_amount_pareto(project_pipe_df, display_unit),
+                use_container_width=True,
+            )
         with right:
-            st.plotly_chart(charts.pipe_worst_ratio(project_pipe_df), use_container_width=True)
+            st.plotly_chart(
+                charts.pipe_worst_ratio(project_pipe_df, display_unit),
+                use_container_width=True,
+            )
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(charts.pipe_joint_count_distribution(project_pipe_df), use_container_width=True)
+            st.plotly_chart(
+                charts.pipe_joint_count_distribution(project_pipe_df, display_unit),
+                use_container_width=True,
+            )
         with right:
-            st.plotly_chart(charts.pipe_joint_count_vs_repair(project_pipe_df), use_container_width=True)
+            st.plotly_chart(
+                charts.pipe_joint_count_vs_repair(project_pipe_df, display_unit),
+                use_container_width=True,
+            )
 
         critical_pipes = (
             project_pipe_df.nlargest(15, ["repair_amount", "repair_ratio"])[
                 ["pipe_no", "repair_amount", "repair_ratio", "repair_count", "surface_state"]
             ]
+            .assign(
+                repair_amount=lambda frame: amount_in_display_unit(
+                    frame["repair_amount"],
+                    display_unit,
+                )
+            )
             .rename(
                 columns={
                     "pipe_no": "Pipe No.",
-                    "repair_amount": "Repair Amount (m)",
+                    "repair_amount": f"Repair Amount ({project_unit})",
                     "repair_ratio": "Repair Ratio",
                     "repair_count": "Band Joint Count",
                     "surface_state": "Surface State",
@@ -417,15 +451,13 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
         )
         st.dataframe(
             critical_pipes.style.format(
-                {"Repair Amount (m)": "{:,.3f}", "Repair Ratio": "{:.2%}"}
+                {f"Repair Amount ({project_unit})": "{:,.3f}", "Repair Ratio": "{:.2%}"}
             ),
             use_container_width=True,
             hide_index=True,
         )
 else:
     st.info("Pipe-level project sheet data is not loaded for the selected date.")
-
-st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 
 with st.expander("Master data"):
     st.dataframe(format_preview(filtered, display_unit), use_container_width=True)

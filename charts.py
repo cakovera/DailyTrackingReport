@@ -334,52 +334,60 @@ def historical_benchmark_comparison(df: pd.DataFrame, baseline_df: pd.DataFrame 
     return fig
 
 
-def pipe_worst_ratio(pipe_df: pd.DataFrame):
+def pipe_worst_ratio(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
     data = pipe_df.nlargest(15, "repair_ratio").copy()
     if data.empty:
         fig = go.Figure()
         fig.update_layout(title="Worst Pipes by Repair Ratio")
         return fig
     data["pipe_label"] = data["project_sheet"] + " | Pipe " + data["pipe_no"].astype(str)
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     fig = px.bar(
         data.sort_values("repair_ratio"),
         x="repair_ratio",
         y="pipe_label",
         orientation="h",
-        color="repair_amount",
+        color="repair_amount_display",
         color_continuous_scale="Reds",
         text=data.sort_values("repair_ratio")["repair_ratio"].map(lambda value: f"{value:.2%}"),
         title="Worst Pipes by Repair Ratio",
     )
-    fig.update_layout(xaxis_title="Repair Ratio", yaxis_title="Project / Pipe", coloraxis_colorbar_title="Repair Amount (m)")
+    fig.update_layout(
+        xaxis_title="Repair Ratio",
+        yaxis_title="Project / Pipe",
+        coloraxis_colorbar_title=f"Repair Amount ({unit})",
+    )
     fig.update_xaxes(tickformat=".2%")
     fig.update_traces(textposition="outside")
     return fig
 
 
-def pipe_repair_amount_pareto(pipe_df: pd.DataFrame):
+def pipe_repair_amount_pareto(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
     data = pipe_df.copy()
     if data.empty:
         fig = go.Figure()
         fig.update_layout(title="Pipe Repair Amount Pareto")
         return fig
     data["pipe_label"] = data["project_sheet"] + " | Pipe " + data["pipe_no"].astype(str)
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     grouped = (
         data.groupby("pipe_label", as_index=False)
-        .agg(repair_amount=("repair_amount", "sum"), repair_ratio=("repair_ratio", "max"))
-        .sort_values("repair_amount", ascending=False)
+        .agg(repair_amount_display=("repair_amount_display", "sum"), repair_ratio=("repair_ratio", "max"))
+        .sort_values("repair_amount_display", ascending=False)
     )
-    total = grouped["repair_amount"].sum()
+    total = grouped["repair_amount_display"].sum()
     top = grouped.head(20).copy()
-    top["cumulative_share"] = top["repair_amount"].cumsum() / total if total else 0
+    top["cumulative_share"] = top["repair_amount_display"].cumsum() / total if total else 0
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=top["pipe_label"],
-            y=top["repair_amount"],
+            y=top["repair_amount_display"],
             name="Repair Amount",
             marker_color="#0ea5e9",
-            text=top["repair_amount"].map(lambda value: f"{value:,.2f}"),
+            text=top["repair_amount_display"].map(lambda value: f"{value:,.2f}"),
             textposition="outside",
         )
     )
@@ -398,7 +406,7 @@ def pipe_repair_amount_pareto(pipe_df: pd.DataFrame):
     fig.update_layout(
         title="Pipe Repair Amount Pareto",
         xaxis_title="Project / Pipe",
-        yaxis_title="Repair Amount (m)",
+        yaxis_title=f"Repair Amount ({unit})",
         yaxis2={"title": "Cumulative Share", "overlaying": "y", "side": "right", "tickformat": ".0%", "range": [0, 1.05]},
         legend_title_text="",
     )
@@ -452,23 +460,25 @@ def pipe_project_outlier_scatter(pipe_df: pd.DataFrame):
     return fig
 
 
-def pipe_joint_count_distribution(pipe_df: pd.DataFrame):
+def pipe_joint_count_distribution(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
     data = pipe_df[pipe_df["repair_count"].notna()].copy()
     if data.empty:
         fig = go.Figure()
         fig.update_layout(title="Band Joint Count Distribution")
         return fig
     data["repair_count"] = data["repair_count"].astype(int)
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     grouped = (
         data.groupby("repair_count", as_index=False)
-        .agg(pipe_count=("pipe_no", "count"), repair_amount=("repair_amount", "sum"))
+        .agg(pipe_count=("pipe_no", "count"), repair_amount_display=("repair_amount_display", "sum"))
         .sort_values("repair_count")
     )
     fig = px.bar(
         grouped,
         x="repair_count",
         y="pipe_count",
-        color="repair_amount",
+        color="repair_amount_display",
         color_continuous_scale="Blues",
         text="pipe_count",
         title="Band Joint Count Distribution",
@@ -476,31 +486,33 @@ def pipe_joint_count_distribution(pipe_df: pd.DataFrame):
     fig.update_layout(
         xaxis_title="Band Joint Count per Pipe",
         yaxis_title="Pipe Count",
-        coloraxis_colorbar_title="Repair Amount (m)",
+        coloraxis_colorbar_title=f"Repair Amount ({unit})",
     )
     fig.update_traces(
         textposition="outside",
         hovertemplate=(
             "Band joints: %{x}<br>"
             "Pipe count: %{y}<br>"
-            "Total repair: %{marker.color:,.2f} m<extra></extra>"
+            f"Total repair: %{{marker.color:,.2f}} {unit}<extra></extra>"
         ),
     )
     return fig
 
 
-def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame):
+def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
     data = pipe_df[pipe_df["repair_count"].notna()].copy()
     if data.empty:
         fig = go.Figure()
         fig.update_layout(title="Band Joint Count vs Repair Amount")
         return fig
     data["pipe_label"] = "Pipe " + data["pipe_no"].astype(str)
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     fig = px.scatter(
         data,
         x="repair_count",
-        y="repair_amount",
-        size="repair_amount",
+        y="repair_amount_display",
+        size="repair_amount_display",
         color="repair_ratio",
         color_continuous_scale="Turbo",
         hover_name="pipe_label",
@@ -508,7 +520,7 @@ def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame):
     )
     fig.update_layout(
         xaxis_title="Band Joint Count",
-        yaxis_title="Repair Amount (m)",
+        yaxis_title=f"Repair Amount ({unit})",
         coloraxis_colorbar_title="Repair Ratio",
     )
     fig.update_coloraxes(colorbar_tickformat=".2%")
