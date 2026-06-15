@@ -22,6 +22,10 @@ EXCLUDED_SHEETS = {
     "Sheet1",
 }
 
+# Excel formulas require a non-zero repair amount in otherwise empty pipe
+# cards. Values at or below 0.0001 m are controlled placeholders, not repairs.
+PLACEHOLDER_REPAIR_AMOUNT_MAX_M = 0.0001
+
 
 @dataclass
 class ProjectParseReport:
@@ -109,6 +113,12 @@ def parse_project_pipe_repairs(file: str | Path | BinaryIO, report_date: object)
                     report.skipped_blocks += 1
                     continue
 
+                normalized_repair_amount = float(repair_amount)
+                normalized_ratio = float(ratio)
+                if normalized_repair_amount <= PLACEHOLDER_REPAIR_AMOUNT_MAX_M:
+                    normalized_repair_amount = 0.0
+                    normalized_ratio = 0.0
+
                 repair_count = ws.cell(cell.row + 5, cell.column + 3).value
                 category = normalize_spaces(ws.cell(cell.row + 5, cell.column + 4).value)
                 surface_state = normalize_spaces(ws.cell(cell.row + 1, cell.column).value)
@@ -122,8 +132,8 @@ def parse_project_pipe_repairs(file: str | Path | BinaryIO, report_date: object)
                         "block_cell": cell.coordinate,
                         "pipe_no": int(pipe_no),
                         "pipe_length_ft": pipe_length_ft,
-                        "repair_amount": float(repair_amount),
-                        "repair_ratio": float(ratio),
+                        "repair_amount": normalized_repair_amount,
+                        "repair_ratio": normalized_ratio,
                         "repair_count": int(repair_count) if _is_number(repair_count) else None,
                         "repair_category": category or "Unspecified",
                         "surface_state": surface_state or "Unspecified",

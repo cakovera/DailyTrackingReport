@@ -4,22 +4,32 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import database as db
 from calculations import METERS_PER_FOOT, amount_in_display_unit, apply_meter_based_repair_ratios, length_in_display_unit, unit_label
-from database import (
-    DB_PATH,
-    get_backend_name,
-    get_existing_keys,
-    load_historical_baselines,
-    load_master_data,
-    load_pipe_repair_details,
-    upsert_pipe_repair_details,
-    upsert_historical_baselines,
-    upsert_repair_rates,
-)
 from parser import parse_daily_repair_rate
 from pdf_report import build_a3_pdf_report
-from project_parser import parse_project_pipe_repairs
 from validators import mark_duplicate_counts
+
+DB_PATH = db.DB_PATH
+get_backend_name = db.get_backend_name
+get_existing_keys = db.get_existing_keys
+load_historical_baselines = db.load_historical_baselines
+load_master_data = db.load_master_data
+upsert_historical_baselines = db.upsert_historical_baselines
+upsert_repair_rates = db.upsert_repair_rates
+
+# Pipe-level analysis is optional so a partial/stale cloud deployment cannot
+# prevent the core repair-rate dashboard from starting.
+try:
+    from project_parser import parse_project_pipe_repairs
+
+    load_pipe_repair_details = db.load_pipe_repair_details
+    upsert_pipe_repair_details = db.upsert_pipe_repair_details
+    PIPE_ANALYSIS_AVAILABLE = True
+    PIPE_ANALYSIS_IMPORT_ERROR = ""
+except (ImportError, AttributeError) as exc:
+    PIPE_ANALYSIS_AVAILABLE = False
+    PIPE_ANALYSIS_IMPORT_ERROR = str(exc)
 
 
 st.set_page_config(page_title="Daily Repair Rate Trend Dashboard", layout="wide")
@@ -85,7 +95,7 @@ if uploaded is not None:
     uploaded.seek(0)
     project_pipe_df = pd.DataFrame()
     project_pipe_report = None
-    if not parsed_df.empty:
+    if not parsed_df.empty and PIPE_ANALYSIS_AVAILABLE:
         project_pipe_df, project_pipe_report = parse_project_pipe_repairs(uploaded, parsed_df["date"].iloc[0])
     if not parsed_df.empty:
         existing_keys = get_existing_keys(parsed_df)
@@ -174,12 +184,17 @@ st.divider()
 try:
     master_df = load_master_data()
     baseline_master_df = load_historical_baselines()
-    pipe_master_df = load_pipe_repair_details()
+    pipe_master_df = load_pipe_repair_details() if PIPE_ANALYSIS_AVAILABLE else pd.DataFrame()
 except Exception as exc:
     st.error("Database bağlantısı kurulamadı veya Supabase tablosu hazır değil.")
     st.info("Supabase kullanıyorsanız önce SQL Editor içinde supabase_setup.sql dosyasındaki script'i çalıştırın.")
     st.code(str(exc), language="text")
     st.stop()
+if not PIPE_ANALYSIS_AVAILABLE:
+    st.warning(
+        "Pipe-level analysis module is temporarily unavailable. "
+        "The core dashboard and Excel import remain active."
+    )
 if master_df.empty:
     st.info("Dashboard için master database içinde veri yok. Önce geçerli bir Excel dosyası import edin.")
     st.stop()
