@@ -207,7 +207,12 @@ def _baseline_records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
 def _pipe_records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
     write_df = df.drop(columns=["id"], errors="ignore").copy()
     write_df["date"] = pd.to_datetime(write_df["date"]).dt.strftime("%Y-%m-%d")
-    return write_df.astype(object).where(pd.notna(write_df), None).to_dict(orient="records")
+    records = write_df.astype(object).where(pd.notna(write_df), None).to_dict(orient="records")
+    for record in records:
+        record["pipe_no"] = int(record["pipe_no"])
+        if record.get("repair_count") is not None:
+            record["repair_count"] = int(record["repair_count"])
+    return records
 
 
 def get_existing_keys(df: pd.DataFrame, conn: sqlite3.Connection | None = None) -> set[tuple[str, str, str]]:
@@ -285,7 +290,13 @@ def upsert_pipe_repair_details(df: pd.DataFrame, conn: sqlite3.Connection | None
 
     if get_backend_name() == "supabase":
         client = _get_supabase_client()
-        client.table(PIPE_TABLE_NAME).upsert(records, on_conflict="date,project_sheet,block_cell").execute()
+        # Keep PostgREST requests bounded for workbooks with thousands of pipes.
+        for start in range(0, len(records), 500):
+            batch = records[start : start + 500]
+            client.table(PIPE_TABLE_NAME).upsert(
+                batch,
+                on_conflict="date,project_sheet,block_cell",
+            ).execute()
         return len(records)
 
     should_close = conn is None
@@ -302,12 +313,24 @@ def load_pipe_repair_details(conn: sqlite3.Connection | None = None) -> pd.DataF
     if get_backend_name() == "supabase":
         client = _get_supabase_client()
         try:
-            response = client.table(PIPE_TABLE_NAME).select("*").order("date").execute()
+            rows: list[dict[str, Any]] = []
+            page_size = 1000
+            for start in range(0, 100_000, page_size):
+                response = (
+                    client.table(PIPE_TABLE_NAME)
+                    .select("*")
+                    .order("date")
+                    .range(start, start + page_size - 1)
+                    .execute()
+                )
+                rows.extend(response.data)
+                if len(response.data) < page_size:
+                    break
         except Exception as exc:
             if PIPE_TABLE_NAME in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
                 return pd.DataFrame()
             raise
-        df = pd.DataFrame(response.data)
+        df = pd.DataFrame(rows)
     else:
         should_close = conn is None
         conn = conn or get_connection()
