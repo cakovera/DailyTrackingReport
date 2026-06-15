@@ -23,6 +23,7 @@ upsert_repair_rates = db.upsert_repair_rates
 try:
     from project_parser import parse_project_pipe_repairs
     from pipe_analysis import reconcile_pipe_projects
+    from project_pdf_report import build_project_pipe_pdf_report
 
     load_pipe_repair_details = db.load_pipe_repair_details
     upsert_pipe_repair_details = db.upsert_pipe_repair_details
@@ -42,6 +43,12 @@ if "pdf_report" not in st.session_state:
     st.session_state.pdf_report = None
 if "pdf_report_name" not in st.session_state:
     st.session_state.pdf_report_name = None
+if "project_pdf_report" not in st.session_state:
+    st.session_state.project_pdf_report = None
+if "project_pdf_report_name" not in st.session_state:
+    st.session_state.project_pdf_report_name = None
+if "project_pdf_report_key" not in st.session_state:
+    st.session_state.project_pdf_report_key = None
 
 
 def format_preview(df: pd.DataFrame, display_unit: str = "m") -> pd.DataFrame:
@@ -356,6 +363,32 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
             "Reconciliation passed. "
             f"Difference: {reconciliation['difference_m']:+.4f} m."
         )
+        project_report_key = f"{selected_date}|{selected_sheet}"
+        if st.button("Generate Selected Project A3 PDF Report"):
+            with st.spinner("Preparing project PDF report..."):
+                st.session_state.project_pdf_report = build_project_pipe_pdf_report(
+                    project_pipe_df,
+                    reconciliation,
+                    selected_date,
+                )
+                safe_project = "".join(
+                    char if char.isalnum() or char in "-_" else "_"
+                    for char in str(reconciliation["project_no"])
+                ).strip("_")
+                st.session_state.project_pdf_report_name = (
+                    f"project_pipe_analysis_{safe_project}_{selected_date}.pdf"
+                )
+                st.session_state.project_pdf_report_key = project_report_key
+        if (
+            st.session_state.project_pdf_report
+            and st.session_state.project_pdf_report_key == project_report_key
+        ):
+            st.download_button(
+                "Download Selected Project A3 PDF Report",
+                data=st.session_state.project_pdf_report,
+                file_name=st.session_state.project_pdf_report_name,
+                mime="application/pdf",
+            )
 
         left, right = st.columns(2)
         with left:
@@ -377,7 +410,7 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
                     "pipe_no": "Pipe No.",
                     "repair_amount": "Repair Amount (m)",
                     "repair_ratio": "Repair Ratio",
-                    "repair_count": "Bant Eki Adedi",
+                    "repair_count": "Band Joint Count",
                     "surface_state": "Surface State",
                 }
             )

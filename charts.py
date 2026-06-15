@@ -456,7 +456,7 @@ def pipe_joint_count_distribution(pipe_df: pd.DataFrame):
     data = pipe_df[pipe_df["repair_count"].notna()].copy()
     if data.empty:
         fig = go.Figure()
-        fig.update_layout(title="Bant Eki Adedi Dağılımı")
+        fig.update_layout(title="Band Joint Count Distribution")
         return fig
     data["repair_count"] = data["repair_count"].astype(int)
     grouped = (
@@ -471,19 +471,19 @@ def pipe_joint_count_distribution(pipe_df: pd.DataFrame):
         color="repair_amount",
         color_continuous_scale="Blues",
         text="pipe_count",
-        title="Bant Eki Adedi Dağılımı",
+        title="Band Joint Count Distribution",
     )
     fig.update_layout(
-        xaxis_title="Boru Başına Bant Eki Adedi",
-        yaxis_title="Boru Sayısı",
+        xaxis_title="Band Joint Count per Pipe",
+        yaxis_title="Pipe Count",
         coloraxis_colorbar_title="Repair Amount (m)",
     )
     fig.update_traces(
         textposition="outside",
         hovertemplate=(
-            "Bant eki: %{x}<br>"
-            "Boru sayısı: %{y}<br>"
-            "Toplam repair: %{marker.color:,.2f} m<extra></extra>"
+            "Band joints: %{x}<br>"
+            "Pipe count: %{y}<br>"
+            "Total repair: %{marker.color:,.2f} m<extra></extra>"
         ),
     )
     return fig
@@ -493,7 +493,7 @@ def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame):
     data = pipe_df[pipe_df["repair_count"].notna()].copy()
     if data.empty:
         fig = go.Figure()
-        fig.update_layout(title="Bant Eki Adedi ve Repair Amount")
+        fig.update_layout(title="Band Joint Count vs Repair Amount")
         return fig
     data["pipe_label"] = "Pipe " + data["pipe_no"].astype(str)
     fig = px.scatter(
@@ -504,10 +504,10 @@ def pipe_joint_count_vs_repair(pipe_df: pd.DataFrame):
         color="repair_ratio",
         color_continuous_scale="Turbo",
         hover_name="pipe_label",
-        title="Bant Eki Adedi ve Repair Amount",
+        title="Band Joint Count vs Repair Amount",
     )
     fig.update_layout(
-        xaxis_title="Bant Eki Adedi",
+        xaxis_title="Band Joint Count",
         yaxis_title="Repair Amount (m)",
         coloraxis_colorbar_title="Repair Ratio",
     )
