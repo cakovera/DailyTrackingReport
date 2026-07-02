@@ -252,6 +252,27 @@ def pipe_group_style(summary_df: pd.DataFrame, display_unit: str):
     )
 
 
+def dimension_project_comparison_chart(pipe_df: pd.DataFrame, display_unit: str):
+    if hasattr(charts, "dimension_project_comparison"):
+        return charts.dimension_project_comparison(pipe_df, display_unit)
+
+    fallback = pipe_df.copy()
+    fallback["pipe_group"] = fallback["project_no"].astype(str)
+    project_order = {project: index + 1 for index, project in enumerate(fallback["pipe_group"].drop_duplicates())}
+    fallback["pipe_group_order"] = fallback["pipe_group"].map(project_order)
+    return charts.pipe_group_comparison(fallback, "pipe_group", display_unit, group_title="Project")
+
+
+def dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str):
+    if hasattr(charts, "dimension_worst_pipes"):
+        return charts.dimension_worst_pipes(pipe_df, display_unit)
+
+    fallback = pipe_df.copy()
+    if "project_sheet" not in fallback.columns:
+        fallback["project_sheet"] = fallback["project_no"].astype(str)
+    return charts.pipe_worst_ratio(fallback, display_unit)
+
+
 def build_dimension_pipe_frame(
     selected_pipe_df: pd.DataFrame,
     reconciled_projects: pd.DataFrame,
@@ -964,12 +985,12 @@ A:1-10,26-34; B:11-25
                     left, right = st.columns(2)
                     with left:
                         st.plotly_chart(
-                            charts.dimension_project_comparison(dimension_pipe_df, display_unit),
+                            dimension_project_comparison_chart(dimension_pipe_df, display_unit),
                             use_container_width=True,
                         )
                     with right:
                         st.plotly_chart(
-                            charts.dimension_worst_pipes(dimension_pipe_df, display_unit),
+                            dimension_worst_pipes_chart(dimension_pipe_df, display_unit),
                             use_container_width=True,
                         )
 
