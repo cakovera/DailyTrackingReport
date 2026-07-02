@@ -217,6 +217,108 @@ def assign_all_pipes_group(pipe_df: pd.DataFrame, label: str = "All Pipes") -> p
     return out.dropna(subset=["pipe_no_numeric"]).copy()
 
 
+def summarize_pipe_groups(grouped_pipe_df: pd.DataFrame, group_column_label: str, display_unit: str) -> pd.DataFrame:
+    unit = unit_label(display_unit)
+    summary = (
+        grouped_pipe_df.groupby("pipe_group", as_index=False)
+        .agg(
+            **{
+                "Sort": ("pipe_group_order", "min"),
+                "Pipe Count": ("pipe_no_numeric", "count"),
+                "Avg Repair Ratio": ("repair_ratio", "mean"),
+                "Max Repair Ratio": ("repair_ratio", "max"),
+                f"Total Repair Amount ({unit})": (
+                    "repair_amount",
+                    lambda series: amount_in_display_unit(series.sum(), display_unit),
+                ),
+            }
+        )
+        .rename(columns={"pipe_group": group_column_label})
+        .sort_values("Sort")
+        .drop(columns=["Sort"])
+    )
+    return summary
+
+
+def pipe_group_style(summary_df: pd.DataFrame, display_unit: str):
+    unit = unit_label(display_unit)
+    return summary_df.style.format(
+        {
+            "Pipe Count": "{:,.0f}",
+            "Avg Repair Ratio": "{:.2%}",
+            "Max Repair Ratio": "{:.2%}",
+            f"Total Repair Amount ({unit})": "{:,.2f}",
+        }
+    )
+
+
+def build_dimension_pipe_frame(
+    selected_pipe_df: pd.DataFrame,
+    reconciled_projects: pd.DataFrame,
+    project_sheets: list[str],
+) -> pd.DataFrame:
+    meta = reconciled_projects[
+        ["project_sheet", "project_no", "dimensions", "expected_repair_amount", "pipe_repair_amount"]
+    ].copy()
+    out = selected_pipe_df[selected_pipe_df["project_sheet"].isin(project_sheets)].copy()
+    if out.empty:
+        return out
+    out = out.merge(meta, on="project_sheet", how="left")
+    out["pipe_no_numeric"] = pd.to_numeric(out["pipe_no"], errors="coerce")
+    out["project_pipe_label"] = out["project_no"].astype(str) + " | Pipe " + out["pipe_no_numeric"].astype("Int64").astype(str)
+    return out
+
+
+def apply_project_saved_groups(
+    dimension_pipe_df: pd.DataFrame,
+    reconciled_selection: pd.DataFrame,
+    config_field: str,
+    fallback_label: str,
+    prefix_project: bool = True,
+    fallback_when_missing: bool = True,
+) -> tuple[pd.DataFrame, list[str]]:
+    frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
+    for _, project in reconciled_selection.iterrows():
+        project_sheet = str(project["project_sheet"])
+        project_no = str(project["project_no"])
+        dimensions = str(project["dimensions"])
+        project_df = dimension_pipe_df[dimension_pipe_df["project_sheet"].eq(project_sheet)].copy()
+        if project_df.empty:
+            continue
+        try:
+            config = load_project_group_config(project_sheet, project_no, dimensions)
+        except Exception as exc:
+            config = None
+            warnings.append(f"{project_no}: saved group settings could not be loaded ({exc})")
+        spec = (config or {}).get(config_field, "").strip()
+        if not spec:
+            if not fallback_when_missing:
+                warnings.append(f"{project_no}: saved {config_field.replace('_', ' ')} is empty.")
+                continue
+            grouped = assign_all_pipes_group(project_df, f"{project_no} {fallback_label}")
+            grouped["pipe_group"] = f"{project_no} {fallback_label}"
+            grouped["pipe_group_order"] = len(frames) + 1
+            frames.append(grouped)
+            continue
+        ranges, errors = parse_pipe_group_ranges(spec)
+        if errors:
+            warnings.extend([f"{project_no}: {error}" for error in errors])
+            continue
+        grouped, group_warnings = assign_pipe_groups(project_df, ranges)
+        warnings.extend([f"{project_no}: {warning}" for warning in group_warnings])
+        if grouped.empty:
+            warnings.append(f"{project_no}: no pipe rows matched saved groups.")
+            continue
+        if prefix_project:
+            grouped["pipe_group"] = project_no + " | " + grouped["pipe_group"].astype(str)
+        grouped["pipe_group_order"] = (len(frames) + 1) * 1000 + pd.to_numeric(grouped["pipe_group_order"], errors="coerce")
+        frames.append(grouped)
+    if not frames:
+        return pd.DataFrame(), warnings
+    return pd.concat(frames, ignore_index=True), warnings
+
+
 with st.sidebar:
     st.header("Import")
     uploaded = st.file_uploader("Daily Activity Excel", type=["xlsx"])
@@ -808,6 +910,157 @@ A:1-10,26-34; B:11-25
             use_container_width=True,
             hide_index=True,
         )
+
+        st.subheader("Dimension Pipe Analysis")
+        dimension_options = sorted(reconciled_projects["dimensions"].dropna().astype(str).unique().tolist())
+        if not dimension_options:
+            st.info("No reconciled dimensions are available for dimension-level pipe analysis.")
+        else:
+            selected_dimension_for_pipe = st.selectbox(
+                "Dimension",
+                dimension_options,
+                key="dimension_pipe_analysis_dimension",
+            )
+            dimension_projects = reconciled_projects[
+                reconciled_projects["dimensions"].astype(str).eq(selected_dimension_for_pipe)
+            ].copy()
+            dimension_project_labels = {
+                row["project_sheet"]: f"{row['project_no']} | {row['project_sheet']}"
+                for _, row in dimension_projects.iterrows()
+            }
+            selected_dimension_sheets = st.multiselect(
+                "Projects in selected dimension",
+                dimension_projects["project_sheet"].tolist(),
+                default=dimension_projects["project_sheet"].tolist(),
+                format_func=lambda sheet: dimension_project_labels.get(sheet, sheet),
+            )
+            if not selected_dimension_sheets:
+                st.info("Select at least one project for dimension pipe analysis.")
+            else:
+                selected_dimension_projects = dimension_projects[
+                    dimension_projects["project_sheet"].isin(selected_dimension_sheets)
+                ].copy()
+                dimension_pipe_df = build_dimension_pipe_frame(
+                    selected_pipe_df,
+                    reconciled_projects,
+                    selected_dimension_sheets,
+                )
+                if dimension_pipe_df.empty:
+                    st.warning("No pipe-level rows were found for the selected dimension/project combination.")
+                else:
+                    dimension_unit = unit_label(display_unit)
+                    d1, d2, d3, d4 = st.columns(4)
+                    d1.metric("Projects", f"{selected_dimension_projects['project_no'].nunique():,}")
+                    d2.metric("Pipe Rows", f"{len(dimension_pipe_df):,}")
+                    d3.metric(
+                        "Avg Repair Ratio",
+                        f"{dimension_pipe_df['repair_ratio'].mean():.2%}",
+                    )
+                    d4.metric(
+                        "Total Repair Amount",
+                        f"{amount_in_display_unit(dimension_pipe_df['repair_amount'].sum(), display_unit):,.2f} {dimension_unit}",
+                    )
+
+                    left, right = st.columns(2)
+                    with left:
+                        st.plotly_chart(
+                            charts.dimension_project_comparison(dimension_pipe_df, display_unit),
+                            use_container_width=True,
+                        )
+                    with right:
+                        st.plotly_chart(
+                            charts.dimension_worst_pipes(dimension_pipe_df, display_unit),
+                            use_container_width=True,
+                        )
+
+                    dimension_pipe_groups_df, dimension_pipe_group_warnings = apply_project_saved_groups(
+                        dimension_pipe_df,
+                        selected_dimension_projects,
+                        "pipe_groups",
+                        "All Pipes",
+                        prefix_project=True,
+                        fallback_when_missing=True,
+                    )
+                    for warning in dimension_pipe_group_warnings:
+                        st.warning(warning)
+                    if not dimension_pipe_groups_df.empty:
+                        st.markdown("**Saved Pipe Group Comparison**")
+                        st.dataframe(
+                            pipe_group_style(
+                                summarize_pipe_groups(dimension_pipe_groups_df, "Pipe Group", display_unit),
+                                display_unit,
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        left, right = st.columns(2)
+                        with left:
+                            st.plotly_chart(
+                                charts.pipe_group_repair_ratio_trend(
+                                    dimension_pipe_groups_df,
+                                    "pipe_group",
+                                    display_unit,
+                                    group_title="Pipe Group",
+                                ),
+                                use_container_width=True,
+                            )
+                        with right:
+                            st.plotly_chart(
+                                charts.pipe_group_comparison(
+                                    dimension_pipe_groups_df,
+                                    "pipe_group",
+                                    display_unit,
+                                    group_title="Pipe Group",
+                                ),
+                                use_container_width=True,
+                            )
+
+                    dimension_machine_groups_df, dimension_machine_group_warnings = apply_project_saved_groups(
+                        dimension_pipe_df,
+                        selected_dimension_projects,
+                        "machine_groups",
+                        "All Pipes",
+                        prefix_project=False,
+                        fallback_when_missing=False,
+                    )
+                    for warning in dimension_machine_group_warnings:
+                        st.info(warning)
+                    if dimension_machine_groups_df.empty:
+                        st.info(
+                            "Saved machine groups were not found for the selected projects. "
+                            "Save machine groups in Project Pipe Analysis first to enable dimension-level machine comparison."
+                        )
+                    else:
+                        st.markdown("**Saved Machine Comparison**")
+                        st.dataframe(
+                            pipe_group_style(
+                                summarize_pipe_groups(dimension_machine_groups_df, "Machine", display_unit),
+                                display_unit,
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        left, right = st.columns(2)
+                        with left:
+                            st.plotly_chart(
+                                charts.pipe_group_repair_ratio_trend(
+                                    dimension_machine_groups_df,
+                                    "pipe_group",
+                                    display_unit,
+                                    group_title="Machine",
+                                ),
+                                use_container_width=True,
+                            )
+                        with right:
+                            st.plotly_chart(
+                                charts.pipe_group_comparison(
+                                    dimension_machine_groups_df,
+                                    "pipe_group",
+                                    display_unit,
+                                    group_title="Machine",
+                                ),
+                                use_container_width=True,
+                            )
 else:
     st.info("Pipe-level project sheet data is not loaded for the selected date.")
 

@@ -817,6 +817,114 @@ def pipe_group_comparison(
     return fig
 
 
+def dimension_project_comparison(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    data = pipe_df.copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Dimension Project Comparison")
+        return fig
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+    grouped = (
+        data.groupby("project_no", as_index=False)
+        .agg(
+            avg_repair_ratio=("repair_ratio", "mean"),
+            max_repair_ratio=("repair_ratio", "max"),
+            total_repair_amount=("repair_amount_display", "sum"),
+            pipe_count=("pipe_no", "count"),
+        )
+        .sort_values("avg_repair_ratio", ascending=False)
+    )
+    fig = px.bar(
+        grouped,
+        x="project_no",
+        y="avg_repair_ratio",
+        color="project_no",
+        text=grouped["avg_repair_ratio"].map(lambda value: f"{value:.2%}"),
+        custom_data=["pipe_count", "total_repair_amount", "max_repair_ratio"],
+        title="Dimension Project Comparison",
+        color_discrete_sequence=["#2563eb", "#f97316", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"],
+    )
+    max_ratio = grouped["avg_repair_ratio"].max()
+    fig.update_layout(
+        xaxis_title="Project",
+        yaxis_title="Average Repair Ratio",
+        showlegend=False,
+        height=430,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font={"size": 12, "color": "#111827"},
+        margin={"l": 60, "r": 30, "t": 70, "b": 80},
+    )
+    fig.update_yaxes(
+        tickformat=".1%",
+        gridcolor="#e5e7eb",
+        zeroline=False,
+        range=[0, max_ratio * 1.35 if pd.notna(max_ratio) and max_ratio else 1],
+    )
+    fig.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "Project: %{x}<br>"
+            "Average Repair Ratio: %{y:.2%}<br>"
+            "Max Repair Ratio: %{customdata[2]:.2%}<br>"
+            f"Total Repair Amount: %{{customdata[1]:,.2f}} {unit}<br>"
+            "Pipe Count: %{customdata[0]}<extra></extra>"
+        ),
+    )
+    return fig
+
+
+def dimension_worst_pipes(pipe_df: pd.DataFrame, display_unit: str = "m"):
+    unit = unit_label(display_unit)
+    data = pipe_df.copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title="Worst Pipes in Dimension")
+        return fig
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+    data["project_pipe_label"] = data["project_no"].astype(str) + " | Pipe " + data["pipe_no"].astype(str)
+    top = data.nlargest(20, "repair_ratio").sort_values("repair_ratio")
+    fig = px.bar(
+        top,
+        x="repair_ratio",
+        y="project_pipe_label",
+        orientation="h",
+        color="project_no",
+        text=top["repair_ratio"].map(lambda value: f"{value:.2%}"),
+        custom_data=["repair_amount_display", "repair_count"],
+        title="Worst Pipes in Dimension",
+        color_discrete_sequence=["#dc2626", "#f97316", "#2563eb", "#16a34a", "#7c3aed", "#0891b2"],
+    )
+    max_ratio = top["repair_ratio"].max()
+    fig.update_layout(
+        xaxis_title="Repair Ratio",
+        yaxis_title="Project / Pipe",
+        legend_title_text="Project",
+        height=520,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font={"size": 12, "color": "#111827"},
+        margin={"l": 130, "r": 30, "t": 70, "b": 60},
+    )
+    fig.update_xaxes(
+        tickformat=".1%",
+        gridcolor="#e5e7eb",
+        zeroline=False,
+        range=[0, max_ratio * 1.25 if pd.notna(max_ratio) and max_ratio else 1],
+    )
+    fig.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "%{y}<br>"
+            "Repair Ratio: %{x:.2%}<br>"
+            f"Repair Amount: %{{customdata[0]:,.2f}} {unit}<br>"
+            "Band Joint Count: %{customdata[1]}<extra></extra>"
+        ),
+    )
+    return fig
+
+
 def repair_amount_trend(df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     grouped = repair_amount_trend_data(df, display_unit)
