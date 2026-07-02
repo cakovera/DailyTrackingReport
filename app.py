@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -15,6 +17,8 @@ get_backend_name = db.get_backend_name
 get_existing_keys = db.get_existing_keys
 load_historical_baselines = db.load_historical_baselines
 load_master_data = db.load_master_data
+load_project_group_config = db.load_project_group_config
+upsert_project_group_config = db.upsert_project_group_config
 upsert_historical_baselines = db.upsert_historical_baselines
 upsert_repair_rates = db.upsert_repair_rates
 
@@ -49,6 +53,12 @@ if "project_pdf_report_name" not in st.session_state:
     st.session_state.project_pdf_report_name = None
 if "project_pdf_report_key" not in st.session_state:
     st.session_state.project_pdf_report_key = None
+if "project_group_config_key" not in st.session_state:
+    st.session_state.project_group_config_key = None
+if "pipe_group_spec_input" not in st.session_state:
+    st.session_state.pipe_group_spec_input = ""
+if "machine_group_spec_input" not in st.session_state:
+    st.session_state.machine_group_spec_input = ""
 
 
 def format_preview(df: pd.DataFrame, display_unit: str = "m") -> pd.DataFrame:
@@ -67,6 +77,96 @@ def format_preview(df: pd.DataFrame, display_unit: str = "m") -> pd.DataFrame:
     for col in ["repair_ratio", "repair_ratio_incl_skelp"]:
         out[col] = out[col].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
     return out
+
+
+def parse_pipe_group_ranges(spec: str) -> tuple[list[dict[str, int | str]], list[str]]:
+    ranges: list[dict[str, int | str]] = []
+    errors: list[str] = []
+    for index, group_part in enumerate([part.strip() for part in spec.split(";") if part.strip()], start=1):
+        if ":" in group_part:
+            raw_label, range_part = group_part.split(":", 1)
+            group_label = raw_label.strip()
+        else:
+            group_label = ""
+            range_part = group_part
+        if not group_label:
+            group_label = f"Pipe {range_part.strip()}"
+        if not group_label:
+            errors.append(f"Missing pipe group in: {group_part}")
+            continue
+        for raw_range in [part.strip() for part in range_part.split(",") if part.strip()]:
+            match = re.fullmatch(r"(\d+)(?:\s*-\s*(\d+))?", raw_range)
+            if not match:
+                errors.append(f"Invalid pipe interval '{raw_range}' for group {group_label}")
+                continue
+            start = int(match.group(1))
+            end = int(match.group(2) or match.group(1))
+            if start > end:
+                errors.append(f"Pipe interval start is greater than end: {group_label}:{raw_range}")
+                continue
+            range_text = str(start) if start == end else f"{start}-{end}"
+            ranges.append(
+                {
+                    "group_label": group_label,
+                    "start": start,
+                    "end": end,
+                    "range_text": range_text,
+                    "display_label": group_label,
+                    "sort_order": index,
+                }
+            )
+    if not ranges and not errors:
+        errors.append("At least one range is required.")
+    return ranges, errors
+
+
+def assign_pipe_groups(pipe_df: pd.DataFrame, ranges: list[dict[str, int | str]]) -> tuple[pd.DataFrame, list[str]]:
+    out = pipe_df.copy()
+    out["pipe_no_numeric"] = pd.to_numeric(out["pipe_no"], errors="coerce")
+    out["pipe_group"] = pd.NA
+    out["pipe_group_order"] = pd.NA
+    warnings: list[str] = []
+
+    assigned_pipe_numbers: set[int] = set()
+    for range_item in ranges:
+        start = int(range_item["start"])
+        end = int(range_item["end"])
+        mask = out["pipe_no_numeric"].between(start, end, inclusive="both")
+        overlapping = sorted(
+            out.loc[mask & out["pipe_group"].notna(), "pipe_no_numeric"].dropna().astype(int).unique()
+        )
+        if overlapping:
+            warnings.append(
+                f"Overlapping pipe interval for {range_item['display_label']} includes already assigned pipes: {overlapping}"
+            )
+        assign_mask = mask & out["pipe_group"].isna()
+        out.loc[assign_mask, "pipe_group"] = str(range_item["display_label"])
+        out.loc[assign_mask, "pipe_group_order"] = int(range_item["sort_order"])
+        assigned_pipe_numbers.update(out.loc[mask, "pipe_no_numeric"].dropna().astype(int).tolist())
+
+    missing_from_data = [
+        str(range_item["display_label"])
+        for range_item in ranges
+        if out["pipe_no_numeric"].between(int(range_item["start"]), int(range_item["end"]), inclusive="both").sum() == 0
+    ]
+    if missing_from_data:
+        warnings.append("No pipe rows found for these intervals: " + ", ".join(missing_from_data))
+
+    unassigned = sorted(
+        set(out["pipe_no_numeric"].dropna().astype(int).tolist()) - assigned_pipe_numbers
+    )
+    if unassigned:
+        warnings.append(f"These pipes are outside the entered ranges and were excluded: {unassigned}")
+
+    return out[out["pipe_group"].notna()].copy(), warnings
+
+
+def assign_all_pipes_group(pipe_df: pd.DataFrame, label: str = "All Pipes") -> pd.DataFrame:
+    out = pipe_df.copy()
+    out["pipe_no_numeric"] = pd.to_numeric(out["pipe_no"], errors="coerce")
+    out["pipe_group"] = label
+    out["pipe_group_order"] = 1
+    return out.dropna(subset=["pipe_no_numeric"]).copy()
 
 
 with st.sidebar:
@@ -352,6 +452,8 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
         reconciliation = reconciled_projects[
             reconciled_projects["project_sheet"].eq(selected_sheet)
         ].iloc[0]
+        project_no = str(reconciliation["project_no"])
+        dimensions = str(reconciliation["dimensions"])
         project_pipe_df = selected_pipe_df[
             selected_pipe_df["project_sheet"].eq(selected_sheet)
         ].copy()
@@ -378,7 +480,207 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
             "Reconciliation passed. "
             f"Difference: {difference_display:+.4f} {project_unit}."
         )
-        project_report_key = f"{selected_date}|{selected_sheet}|{display_unit}"
+        project_group_config_key = f"{selected_sheet}|{project_no}|{dimensions}"
+        if st.session_state.project_group_config_key != project_group_config_key:
+            try:
+                saved_config = load_project_group_config(selected_sheet, project_no, dimensions)
+            except Exception as config_exc:
+                saved_config = None
+                st.warning(
+                    "Saved group settings could not be loaded. "
+                    "If this is the first run after the update, run supabase_project_group_configs.sql in Supabase SQL Editor."
+                )
+                st.code(str(config_exc), language="text")
+            st.session_state.pipe_group_spec_input = (saved_config or {}).get("pipe_groups", "")
+            st.session_state.machine_group_spec_input = (saved_config or {}).get("machine_groups", "")
+            st.session_state.project_group_config_key = project_group_config_key
+
+        pipe_group_spec = st.text_input(
+            "Pipe Groups",
+            help=(
+                "Leave blank to show all pipes together. Format: 1-18; 19-49. "
+                "Optional labels are supported, for example: Group 1:1-18; Group 2:19-49."
+            ),
+            key="pipe_group_spec_input",
+        )
+        machine_pipe_df = pd.DataFrame()
+        machine_compare_df = pd.DataFrame()
+        if pipe_group_spec.strip():
+            parsed_ranges, range_errors = parse_pipe_group_ranges(pipe_group_spec)
+            if range_errors:
+                for error in range_errors:
+                    st.error(error)
+                machine_pipe_df = pd.DataFrame()
+            else:
+                machine_pipe_df, range_warnings = assign_pipe_groups(project_pipe_df, parsed_ranges)
+                for warning in range_warnings:
+                    st.warning(warning)
+        else:
+            machine_pipe_df = assign_all_pipes_group(project_pipe_df)
+
+        if machine_pipe_df.empty:
+            st.warning("No pipe rows matched the entered pipe groups.")
+        else:
+            comparison_summary = (
+                machine_pipe_df.groupby("pipe_group", as_index=False)
+                .agg(
+                    **{
+                        "Sort": ("pipe_group_order", "min"),
+                        "Pipe Count": ("pipe_no_numeric", "count"),
+                        "Avg Repair Ratio": ("repair_ratio", "mean"),
+                        "Max Repair Ratio": ("repair_ratio", "max"),
+                        f"Total Repair Amount ({project_unit})": (
+                            "repair_amount",
+                            lambda series: amount_in_display_unit(series.sum(), display_unit),
+                        ),
+                    }
+                )
+                .rename(columns={"pipe_group": "Pipe Group"})
+                .sort_values("Sort")
+                .drop(columns=["Sort"])
+            )
+            st.dataframe(
+                comparison_summary.style.format(
+                    {
+                        "Pipe Count": "{:,.0f}",
+                        "Avg Repair Ratio": "{:.2%}",
+                        "Max Repair Ratio": "{:.2%}",
+                        f"Total Repair Amount ({project_unit})": "{:,.2f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            left, right = st.columns(2)
+            with left:
+                st.plotly_chart(
+                    charts.pipe_group_repair_ratio_trend(
+                        machine_pipe_df,
+                        "pipe_group",
+                        display_unit,
+                    ),
+                    use_container_width=True,
+                )
+            with right:
+                st.plotly_chart(
+                    charts.pipe_group_comparison(
+                        machine_pipe_df,
+                        "pipe_group",
+                        display_unit,
+                    ),
+                    use_container_width=True,
+                )
+
+        machine_group_spec = st.text_input(
+            "Machine Groups (Optional)",
+            help="Optional machine comparison. Format: A:1-10,26-34; B:11-25.",
+            key="machine_group_spec_input",
+        )
+        with st.expander("Machine group format info"):
+            st.markdown(
+                """
+Use this field only when you want to compare repair ratios by machine.
+
+Format:
+```text
+A:1-10,26-34; B:11-25
+```
+
+Rules:
+- Put `:` after the machine name.
+- Use `,` between multiple pipe intervals for the same machine.
+- Use `;` between different machines.
+- Leave this field blank if you do not want a machine comparison chart.
+
+Examples:
+```text
+A:1-18; B:19-49
+B:1-18; A:19-30; B:31-49
+A:1-10,26-34; B:11-25
+```
+                """
+            )
+        if st.button("Save group settings"):
+            try:
+                upsert_project_group_config(
+                    selected_sheet,
+                    project_no,
+                    dimensions,
+                    st.session_state.pipe_group_spec_input,
+                    st.session_state.machine_group_spec_input,
+                )
+                st.success("Group settings saved for this project.")
+            except Exception as save_exc:
+                st.error("Group settings could not be saved.")
+                st.info("If Supabase is missing the table, run supabase_project_group_configs.sql in SQL Editor.")
+                st.code(str(save_exc), language="text")
+
+        if machine_group_spec.strip():
+            machine_ranges, machine_errors = parse_pipe_group_ranges(machine_group_spec)
+            if machine_errors:
+                for error in machine_errors:
+                    st.error(error)
+            else:
+                machine_compare_df, machine_warnings = assign_pipe_groups(project_pipe_df, machine_ranges)
+                for warning in machine_warnings:
+                    st.warning(warning)
+                if machine_compare_df.empty:
+                    st.warning("No pipe rows matched the entered machine groups.")
+                else:
+                    machine_summary = (
+                        machine_compare_df.groupby("pipe_group", as_index=False)
+                        .agg(
+                            **{
+                                "Sort": ("pipe_group_order", "min"),
+                                "Pipe Count": ("pipe_no_numeric", "count"),
+                                "Avg Repair Ratio": ("repair_ratio", "mean"),
+                                "Max Repair Ratio": ("repair_ratio", "max"),
+                                f"Total Repair Amount ({project_unit})": (
+                                    "repair_amount",
+                                    lambda series: amount_in_display_unit(series.sum(), display_unit),
+                                ),
+                            }
+                        )
+                        .rename(columns={"pipe_group": "Machine"})
+                        .sort_values("Sort")
+                        .drop(columns=["Sort"])
+                    )
+                    st.dataframe(
+                        machine_summary.style.format(
+                            {
+                                "Pipe Count": "{:,.0f}",
+                                "Avg Repair Ratio": "{:.2%}",
+                                "Max Repair Ratio": "{:.2%}",
+                                f"Total Repair Amount ({project_unit})": "{:,.2f}",
+                            }
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    left, right = st.columns(2)
+                    with left:
+                        st.plotly_chart(
+                            charts.pipe_group_repair_ratio_trend(
+                                machine_compare_df,
+                                "pipe_group",
+                                display_unit,
+                                group_title="Machine",
+                            ),
+                            use_container_width=True,
+                        )
+                    with right:
+                        st.plotly_chart(
+                            charts.pipe_group_comparison(
+                                machine_compare_df,
+                                "pipe_group",
+                                display_unit,
+                                group_title="Machine",
+                            ),
+                            use_container_width=True,
+                        )
+
+        project_report_key = f"{selected_date}|{selected_sheet}|{display_unit}|{pipe_group_spec}|{machine_group_spec}"
         if st.button("Generate Selected Project A3 PDF Report"):
             with st.spinner("Preparing project PDF report..."):
                 st.session_state.project_pdf_report = build_project_pipe_pdf_report(
@@ -386,6 +688,8 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
                     reconciliation,
                     selected_date,
                     display_unit,
+                    pipe_group_df=machine_pipe_df,
+                    machine_group_df=machine_compare_df,
                 )
                 safe_project = "".join(
                     char if char.isalnum() or char in "-_" else "_"

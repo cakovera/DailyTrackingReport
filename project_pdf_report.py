@@ -18,8 +18,10 @@ from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, S
 from calculations import amount_in_display_unit, unit_label
 
 
-CHART_DPI = 240
+CHART_DPI = 260
 CHART_SIZE = (9.6, 3.5)
+WIDE_CHART_SIZE = (19.2, 4.7)
+GROUP_COLORS = ["#2563eb", "#f97316", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"]
 
 
 def _style_axes(ax, title: str) -> None:
@@ -34,13 +36,13 @@ def _style_axes(ax, title: str) -> None:
     ax.spines["bottom"].set_color("#cbd5e1")
 
 
-def _image(fig) -> Image:
+def _image(fig, width_cm: float = 19.8, height_cm: float = 7.0) -> Image:
     buffer = BytesIO()
     fig.tight_layout(pad=1.0)
     fig.savefig(buffer, format="png", dpi=CHART_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     buffer.seek(0)
-    return Image(buffer, width=19.8 * cm, height=7.0 * cm)
+    return Image(buffer, width=width_cm * cm, height=height_cm * cm)
 
 
 def _pareto_chart(pipe_df: pd.DataFrame, display_unit: str) -> Image:
@@ -157,6 +159,127 @@ def _joint_repair_chart(pipe_df: pd.DataFrame, display_unit: str) -> Image:
     return _image(fig)
 
 
+def _group_order(data: pd.DataFrame, group_column: str) -> list:
+    order_column = f"{group_column}_order"
+    if order_column in data.columns:
+        return (
+            data[[group_column, order_column]]
+            .dropna()
+            .drop_duplicates()
+            .sort_values(order_column)[group_column]
+            .tolist()
+        )
+    return sorted(data[group_column].dropna().unique().tolist())
+
+
+def _group_summary_rows(group_df: pd.DataFrame, group_column: str, label: str, display_unit: str) -> list[list[str]]:
+    unit = unit_label(display_unit)
+    data = group_df.copy()
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+    rows = [[label, "Pipe Count", "Avg Repair Ratio", "Max Repair Ratio", f"Total Repair ({unit})"]]
+    for group_name in _group_order(data, group_column):
+        group_data = data[data[group_column].eq(group_name)]
+        rows.append(
+            [
+                escape(str(group_name)),
+                f"{len(group_data):,}",
+                f"{group_data['repair_ratio'].mean():.2%}",
+                f"{group_data['repair_ratio'].max():.2%}",
+                f"{group_data['repair_amount_display'].sum():,.2f}",
+            ]
+        )
+    return rows
+
+
+def _group_trend_chart(group_df: pd.DataFrame, group_column: str, title: str, display_unit: str) -> Image:
+    unit = unit_label(display_unit)
+    data = group_df.copy()
+    data["pipe_no_numeric"] = pd.to_numeric(data["pipe_no"], errors="coerce")
+    data = data.dropna(subset=["pipe_no_numeric", "repair_ratio", group_column]).sort_values("pipe_no_numeric")
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+
+    fig, ax = plt.subplots(figsize=WIDE_CHART_SIZE)
+    for index, group_name in enumerate(_group_order(data, group_column)):
+        group_data = data[data[group_column].eq(group_name)].sort_values("pipe_no_numeric")
+        color = GROUP_COLORS[index % len(GROUP_COLORS)]
+        ax.plot(
+            group_data["pipe_no_numeric"],
+            group_data["repair_ratio"],
+            color=color,
+            linewidth=2.8,
+            marker="o",
+            markersize=5,
+            label=str(group_name),
+        )
+        for _, row in group_data.iterrows():
+            ax.annotate(
+                f"{row['repair_ratio']:.1%}",
+                (row["pipe_no_numeric"], row["repair_ratio"]),
+                textcoords="offset points",
+                xytext=(0, 7),
+                ha="center",
+                fontsize=6.8,
+                color=color,
+                fontweight="bold",
+            )
+        avg = group_data["repair_ratio"].mean()
+        ax.axhline(avg, color=color, linestyle="--", linewidth=1.1, alpha=0.7)
+    ax.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
+    ax.set_xlabel("Pipe No.", fontsize=8)
+    ax.set_ylabel("Repair Ratio", fontsize=8)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=4, fontsize=8, frameon=False)
+    _style_axes(ax, title)
+    return _image(fig, width_cm=38.0, height_cm=9.3)
+
+
+def _group_comparison_chart(group_df: pd.DataFrame, group_column: str, title: str, display_unit: str) -> Image:
+    unit = unit_label(display_unit)
+    data = group_df.copy()
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+    rows = []
+    for group_name in _group_order(data, group_column):
+        group_data = data[data[group_column].eq(group_name)]
+        rows.append(
+            {
+                "group": str(group_name),
+                "avg_repair_ratio": group_data["repair_ratio"].mean(),
+                "total_repair": group_data["repair_amount_display"].sum(),
+                "pipe_count": len(group_data),
+            }
+        )
+    grouped = pd.DataFrame(rows)
+
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    positions = range(len(grouped))
+    bars = ax.bar(positions, grouped["avg_repair_ratio"], color=[GROUP_COLORS[i % len(GROUP_COLORS)] for i in positions])
+    ax.bar_label(
+        bars,
+        labels=[f"{value:.2%}" for value in grouped["avg_repair_ratio"]],
+        padding=4,
+        fontsize=8,
+        fontweight="bold",
+    )
+    for position, row in grouped.iterrows():
+        ax.annotate(
+            f"{row['total_repair']:,.1f} {unit}\n{int(row['pipe_count'])} pipes",
+            (position, row["avg_repair_ratio"]),
+            textcoords="offset points",
+            xytext=(0, -28),
+            ha="center",
+            va="top",
+            fontsize=6.8,
+            color="#334155",
+        )
+    max_value = grouped["avg_repair_ratio"].max()
+    ax.set_ylim(0, max_value * 1.4 if pd.notna(max_value) and max_value else 1)
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(grouped["group"], rotation=15, ha="right")
+    ax.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
+    ax.set_ylabel("Average Repair Ratio", fontsize=8)
+    _style_axes(ax, title)
+    return _image(fig)
+
+
 def _styled_table(rows, widths, font_size=8) -> Table:
     table = Table(rows, colWidths=widths, repeatRows=1)
     table.setStyle(
@@ -186,6 +309,8 @@ def build_project_pipe_pdf_report(
     reconciliation: pd.Series,
     selected_date,
     display_unit: str = "m",
+    pipe_group_df: pd.DataFrame | None = None,
+    machine_group_df: pd.DataFrame | None = None,
 ) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -296,7 +421,29 @@ def build_project_pipe_pdf_report(
             ]
         )
     )
-    story.extend([Spacer(1, 0.2 * cm), chart_grid, PageBreak(), Paragraph("Critical Pipes", section_style)])
+    story.extend([Spacer(1, 0.2 * cm), chart_grid])
+
+    group_sections: list[tuple[str, str, pd.DataFrame]] = []
+    if pipe_group_df is not None and not pipe_group_df.empty:
+        group_sections.append(("Pipe Group Analysis", "Pipe Group", pipe_group_df))
+    if machine_group_df is not None and not machine_group_df.empty:
+        group_sections.append(("Machine Analysis", "Machine", machine_group_df))
+
+    for section_title, label, group_df in group_sections:
+        story.extend([PageBreak(), Paragraph(section_title, section_style)])
+        story.append(
+            _styled_table(
+                _group_summary_rows(group_df, "pipe_group", label, display_unit),
+                [9.0 * cm, 5.0 * cm, 6.0 * cm, 6.0 * cm, 7.0 * cm],
+                font_size=8.5,
+            )
+        )
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(_group_trend_chart(group_df, "pipe_group", f"{label} Repair Ratio Trend", display_unit))
+        story.append(Spacer(1, 0.1 * cm))
+        story.append(_group_comparison_chart(group_df, "pipe_group", f"{label} Average Repair Ratio", display_unit))
+
+    story.extend([PageBreak(), Paragraph("Critical Pipes", section_style)])
 
     critical = pipe_df.nlargest(30, ["repair_amount", "repair_ratio"])
     rows = [["Pipe No.", f"Repair Amount ({unit})", "Repair Ratio", "Band Joint Count", "Surface State"]]

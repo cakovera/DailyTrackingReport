@@ -11,6 +11,7 @@ import pandas as pd
 TABLE_NAME = "repair_rates"
 BASELINE_TABLE_NAME = "historical_baselines"
 PIPE_TABLE_NAME = "pipe_repair_details"
+PROJECT_GROUP_CONFIG_TABLE_NAME = "project_group_configs"
 DB_PATH = Path(os.getenv("REPAIR_DB_PATH", str(Path("data") / "daily_repair_rate.sqlite")))
 
 
@@ -61,6 +62,19 @@ CREATE TABLE IF NOT EXISTS pipe_repair_details (
     repair_category TEXT NOT NULL,
     surface_state TEXT NOT NULL,
     UNIQUE(date, project_sheet, block_cell)
+);
+"""
+
+PROJECT_GROUP_CONFIG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_group_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_sheet TEXT NOT NULL,
+    project_no TEXT NOT NULL,
+    dimensions TEXT NOT NULL,
+    pipe_groups TEXT NOT NULL DEFAULT '',
+    machine_groups TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_sheet, project_no, dimensions)
 );
 """
 
@@ -123,6 +137,18 @@ ON CONFLICT(date, project_sheet, block_cell) DO UPDATE SET
     surface_state = excluded.surface_state;
 """
 
+PROJECT_GROUP_CONFIG_UPSERT_SQL = """
+INSERT INTO project_group_configs (
+    project_sheet, project_no, dimensions, pipe_groups, machine_groups, updated_at
+) VALUES (
+    :project_sheet, :project_no, :dimensions, :pipe_groups, :machine_groups, CURRENT_TIMESTAMP
+)
+ON CONFLICT(project_sheet, project_no, dimensions) DO UPDATE SET
+    pipe_groups = excluded.pipe_groups,
+    machine_groups = excluded.machine_groups,
+    updated_at = CURRENT_TIMESTAMP;
+"""
+
 
 def _get_config_value(name: str) -> str | None:
     env_value = os.getenv(name)
@@ -160,6 +186,15 @@ def _get_supabase_client():
     key = _get_config_value("SUPABASE_KEY")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set for Supabase backend.")
+
+    # Some local Codex/PowerShell sessions set proxy variables to 127.0.0.1:9,
+    # which is a closed discard port. httpx then tries that dead proxy instead
+    # of connecting to Supabase and raises WinError 10061. Keep real proxies,
+    # but remove this known non-network placeholder before creating the client.
+    for proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        if os.getenv(proxy_var, "").strip().lower() == "http://127.0.0.1:9":
+            os.environ.pop(proxy_var, None)
+
     return create_client(url, key)
 
 
@@ -172,12 +207,96 @@ def init_db(conn: sqlite3.Connection | None = None) -> None:
     conn.execute(SCHEMA)
     conn.execute(BASELINE_SCHEMA)
     conn.execute(PIPE_SCHEMA)
+    conn.execute(PROJECT_GROUP_CONFIG_SCHEMA)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(repair_rates)").fetchall()}
     if "production_type" not in columns:
         conn.execute("ALTER TABLE repair_rates ADD COLUMN production_type TEXT NOT NULL DEFAULT 'Coil'")
     conn.commit()
     if should_close:
         conn.close()
+
+
+def load_project_group_config(
+    project_sheet: str,
+    project_no: str,
+    dimensions: str,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, str] | None:
+    if get_backend_name() == "supabase":
+        client = _get_supabase_client()
+        try:
+            response = (
+                client.table(PROJECT_GROUP_CONFIG_TABLE_NAME)
+                .select("pipe_groups,machine_groups")
+                .eq("project_sheet", project_sheet)
+                .eq("project_no", project_no)
+                .eq("dimensions", dimensions)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            if PROJECT_GROUP_CONFIG_TABLE_NAME in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
+                return None
+            raise
+        if not response.data:
+            return None
+        row = response.data[0]
+        return {
+            "pipe_groups": row.get("pipe_groups") or "",
+            "machine_groups": row.get("machine_groups") or "",
+        }
+
+    should_close = conn is None
+    conn = conn or get_connection()
+    init_db(conn)
+    row = conn.execute(
+        """
+        SELECT pipe_groups, machine_groups
+        FROM project_group_configs
+        WHERE project_sheet = ? AND project_no = ? AND dimensions = ?
+        LIMIT 1
+        """,
+        (project_sheet, project_no, dimensions),
+    ).fetchone()
+    if should_close:
+        conn.close()
+    if row is None:
+        return None
+    return {"pipe_groups": row["pipe_groups"] or "", "machine_groups": row["machine_groups"] or ""}
+
+
+def upsert_project_group_config(
+    project_sheet: str,
+    project_no: str,
+    dimensions: str,
+    pipe_groups: str,
+    machine_groups: str,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    record = {
+        "project_sheet": project_sheet,
+        "project_no": project_no,
+        "dimensions": dimensions,
+        "pipe_groups": pipe_groups.strip(),
+        "machine_groups": machine_groups.strip(),
+    }
+
+    if get_backend_name() == "supabase":
+        client = _get_supabase_client()
+        client.table(PROJECT_GROUP_CONFIG_TABLE_NAME).upsert(
+            record,
+            on_conflict="project_sheet,project_no,dimensions",
+        ).execute()
+        return 1
+
+    should_close = conn is None
+    conn = conn or get_connection()
+    init_db(conn)
+    conn.execute(PROJECT_GROUP_CONFIG_UPSERT_SQL, record)
+    conn.commit()
+    if should_close:
+        conn.close()
+    return 1
 
 
 def _records_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
