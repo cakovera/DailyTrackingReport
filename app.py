@@ -17,10 +17,58 @@ get_backend_name = db.get_backend_name
 get_existing_keys = db.get_existing_keys
 load_historical_baselines = db.load_historical_baselines
 load_master_data = db.load_master_data
-load_project_group_config = db.load_project_group_config
-upsert_project_group_config = db.upsert_project_group_config
 upsert_historical_baselines = db.upsert_historical_baselines
 upsert_repair_rates = db.upsert_repair_rates
+
+
+def load_project_group_config(project_sheet: str, project_no: str, dimensions: str) -> dict[str, str] | None:
+    if hasattr(db, "load_project_group_config"):
+        return db.load_project_group_config(project_sheet, project_no, dimensions)
+
+    if get_backend_name() != "supabase" or not hasattr(db, "_get_supabase_client"):
+        return None
+
+    client = db._get_supabase_client()
+    response = (
+        client.table("project_group_configs")
+        .select("pipe_groups,machine_groups")
+        .eq("project_sheet", project_sheet)
+        .eq("project_no", project_no)
+        .eq("dimensions", dimensions)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return None
+    row = response.data[0]
+    return {"pipe_groups": row.get("pipe_groups") or "", "machine_groups": row.get("machine_groups") or ""}
+
+
+def upsert_project_group_config(
+    project_sheet: str,
+    project_no: str,
+    dimensions: str,
+    pipe_groups: str,
+    machine_groups: str,
+) -> int:
+    if hasattr(db, "upsert_project_group_config"):
+        return db.upsert_project_group_config(project_sheet, project_no, dimensions, pipe_groups, machine_groups)
+
+    if get_backend_name() != "supabase" or not hasattr(db, "_get_supabase_client"):
+        raise RuntimeError("Project group config persistence is not available in this database backend.")
+
+    client = db._get_supabase_client()
+    client.table("project_group_configs").upsert(
+        {
+            "project_sheet": project_sheet,
+            "project_no": project_no,
+            "dimensions": dimensions,
+            "pipe_groups": pipe_groups.strip(),
+            "machine_groups": machine_groups.strip(),
+        },
+        on_conflict="project_sheet,project_no,dimensions",
+    ).execute()
+    return 1
 
 # Pipe-level analysis is optional so a partial/stale cloud deployment cannot
 # prevent the core repair-rate dashboard from starting.
