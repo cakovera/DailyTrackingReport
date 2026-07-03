@@ -263,14 +263,32 @@ def dimension_project_comparison_chart(pipe_df: pd.DataFrame, display_unit: str)
     return charts.pipe_group_comparison(fallback, "pipe_group", display_unit, group_title="Project")
 
 
-def dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str):
+def dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str, top_n: int = 20):
     if hasattr(charts, "dimension_worst_pipes"):
-        return charts.dimension_worst_pipes(pipe_df, display_unit)
+        return charts.dimension_worst_pipes(pipe_df, display_unit, top_n=top_n)
 
     fallback = pipe_df.copy()
     if "project_sheet" not in fallback.columns:
         fallback["project_sheet"] = fallback["project_no"].astype(str)
-    return charts.pipe_worst_ratio(fallback, display_unit)
+    return charts.pipe_worst_ratio(fallback.nlargest(top_n, "repair_ratio"), display_unit)
+
+
+def pipe_group_binned_trend_chart(
+    pipe_df: pd.DataFrame,
+    group_column: str,
+    display_unit: str,
+    group_title: str,
+    bin_size: int,
+):
+    if hasattr(charts, "pipe_group_binned_repair_ratio_trend"):
+        return charts.pipe_group_binned_repair_ratio_trend(
+            pipe_df,
+            group_column,
+            display_unit,
+            group_title=group_title,
+            bin_size=bin_size,
+        )
+    return charts.pipe_group_repair_ratio_trend(pipe_df, group_column, display_unit, group_title=group_title)
 
 
 def build_dimension_pipe_frame(
@@ -982,6 +1000,22 @@ A:1-10,26-34; B:11-25
                         f"{amount_in_display_unit(dimension_pipe_df['repair_amount'].sum(), display_unit):,.2f} {dimension_unit}",
                     )
 
+                    control_left, control_right = st.columns(2)
+                    with control_left:
+                        dimension_worst_top_n = st.selectbox(
+                            "Worst pipes shown",
+                            [10, 15, 20, 30],
+                            index=1,
+                            key="dimension_worst_pipe_count",
+                        )
+                    with control_right:
+                        dimension_bin_size = st.selectbox(
+                            "Trend interval size",
+                            [5, 10, 15, 20],
+                            index=1,
+                            key="dimension_pipe_bin_size",
+                        )
+
                     left, right = st.columns(2)
                     with left:
                         st.plotly_chart(
@@ -990,7 +1024,7 @@ A:1-10,26-34; B:11-25
                         )
                     with right:
                         st.plotly_chart(
-                            dimension_worst_pipes_chart(dimension_pipe_df, display_unit),
+                            dimension_worst_pipes_chart(dimension_pipe_df, display_unit, dimension_worst_top_n),
                             use_container_width=True,
                         )
 
@@ -1017,11 +1051,12 @@ A:1-10,26-34; B:11-25
                         left, right = st.columns(2)
                         with left:
                             st.plotly_chart(
-                                charts.pipe_group_repair_ratio_trend(
+                                pipe_group_binned_trend_chart(
                                     dimension_pipe_groups_df,
                                     "pipe_group",
                                     display_unit,
                                     group_title="Pipe Group",
+                                    bin_size=dimension_bin_size,
                                 ),
                                 use_container_width=True,
                             )
@@ -1064,11 +1099,12 @@ A:1-10,26-34; B:11-25
                         left, right = st.columns(2)
                         with left:
                             st.plotly_chart(
-                                charts.pipe_group_repair_ratio_trend(
+                                pipe_group_binned_trend_chart(
                                     dimension_machine_groups_df,
                                     "pipe_group",
                                     display_unit,
                                     group_title="Machine",
+                                    bin_size=dimension_bin_size,
                                 ),
                                 use_container_width=True,
                             )

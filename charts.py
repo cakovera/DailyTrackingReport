@@ -817,6 +817,102 @@ def pipe_group_comparison(
     return fig
 
 
+def pipe_group_binned_repair_ratio_trend(
+    pipe_df: pd.DataFrame,
+    group_column: str,
+    display_unit: str = "m",
+    group_title: str = "Pipe Group",
+    bin_size: int = 10,
+):
+    unit = unit_label(display_unit)
+    bin_size = max(int(bin_size or 1), 1)
+    chart_title = f"{group_title} Repair Ratio Trend - {bin_size} Pipe Average"
+    data = pipe_df.copy()
+    if data.empty or group_column not in data.columns:
+        fig = go.Figure()
+        fig.update_layout(title=chart_title)
+        return fig
+
+    data["pipe_no_numeric"] = pd.to_numeric(data["pipe_no"], errors="coerce")
+    data = data.dropna(subset=["pipe_no_numeric", "repair_ratio", group_column]).copy()
+    if data.empty:
+        fig = go.Figure()
+        fig.update_layout(title=chart_title)
+        return fig
+
+    data["pipe_no_numeric"] = data["pipe_no_numeric"].astype(int)
+    data["bin_start"] = ((data["pipe_no_numeric"] - 1) // bin_size) * bin_size + 1
+    data["bin_end"] = data["bin_start"] + bin_size - 1
+    data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
+    group_order_column = f"{group_column}_order"
+    group_keys = [group_column, "bin_start", "bin_end"]
+    agg_kwargs = {
+        "avg_repair_ratio": ("repair_ratio", "mean"),
+        "max_repair_ratio": ("repair_ratio", "max"),
+        "total_repair_amount": ("repair_amount_display", "sum"),
+        "pipe_count": ("pipe_no_numeric", "count"),
+    }
+    if group_order_column in data.columns:
+        agg_kwargs["sort_order"] = (group_order_column, "min")
+    grouped = data.groupby(group_keys, as_index=False).agg(**agg_kwargs)
+    grouped["bin_label"] = grouped["bin_start"].astype(str) + "-" + grouped["bin_end"].astype(str)
+    grouped["x_label"] = grouped[group_column].astype(str) + " | " + grouped["bin_label"]
+
+    colors = ["#2563eb", "#f97316", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"]
+    if "sort_order" in grouped.columns:
+        group_names = (
+            grouped[[group_column, "sort_order"]]
+            .drop_duplicates()
+            .sort_values("sort_order")[group_column]
+            .tolist()
+        )
+    else:
+        group_names = sorted(grouped[group_column].dropna().unique().tolist())
+
+    fig = go.Figure()
+    for index, group_name in enumerate(group_names):
+        group_data = grouped[grouped[group_column].eq(group_name)].sort_values("bin_start")
+        fig.add_trace(
+            go.Scatter(
+                x=group_data["bin_start"],
+                y=group_data["avg_repair_ratio"],
+                name=str(group_name),
+                mode="lines+markers+text",
+                line={"color": colors[index % len(colors)], "width": 3},
+                marker={"size": 9},
+                text=group_data["avg_repair_ratio"].map(lambda value: f"{value:.1%}"),
+                textposition="top center",
+                customdata=group_data[["bin_label", "pipe_count", "total_repair_amount", "max_repair_ratio"]],
+                hovertemplate=(
+                    "Pipe interval: %{customdata[0]}<br>"
+                    "Average Repair Ratio: %{y:.2%}<br>"
+                    "Max Repair Ratio: %{customdata[3]:.2%}<br>"
+                    f"Total Repair Amount: %{{customdata[2]:,.2f}} {unit}<br>"
+                    "Pipe Count: %{customdata[1]}<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title=chart_title,
+        xaxis_title="Pipe Interval",
+        yaxis_title="Average Repair Ratio",
+        legend_title_text=group_title,
+        height=460,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font={"size": 12, "color": "#111827"},
+        hovermode="closest",
+        margin={"l": 60, "r": 30, "t": 70, "b": 90},
+        legend={"orientation": "h", "yanchor": "bottom", "y": -0.30, "xanchor": "center", "x": 0.5},
+    )
+    tick_values = sorted(grouped["bin_start"].unique().tolist())
+    tick_text = [f"{value}-{value + bin_size - 1}" for value in tick_values]
+    fig.update_xaxes(tickmode="array", tickvals=tick_values, ticktext=tick_text, gridcolor="#e5e7eb", zeroline=False)
+    fig.update_yaxes(tickformat=".1%", gridcolor="#e5e7eb", zeroline=False)
+    return fig
+
+
 def dimension_project_comparison(pipe_df: pd.DataFrame, display_unit: str = "m"):
     unit = unit_label(display_unit)
     data = pipe_df.copy()
@@ -875,7 +971,7 @@ def dimension_project_comparison(pipe_df: pd.DataFrame, display_unit: str = "m")
     return fig
 
 
-def dimension_worst_pipes(pipe_df: pd.DataFrame, display_unit: str = "m"):
+def dimension_worst_pipes(pipe_df: pd.DataFrame, display_unit: str = "m", top_n: int = 20):
     unit = unit_label(display_unit)
     data = pipe_df.copy()
     if data.empty:
@@ -884,7 +980,8 @@ def dimension_worst_pipes(pipe_df: pd.DataFrame, display_unit: str = "m"):
         return fig
     data["repair_amount_display"] = amount_in_display_unit(data["repair_amount"], display_unit)
     data["project_pipe_label"] = data["project_no"].astype(str) + " | Pipe " + data["pipe_no"].astype(str)
-    top = data.nlargest(20, "repair_ratio").sort_values("repair_ratio")
+    top_n = max(int(top_n or 20), 1)
+    top = data.nlargest(top_n, "repair_ratio").sort_values("repair_ratio")
     fig = px.bar(
         top,
         x="repair_ratio",
@@ -893,7 +990,7 @@ def dimension_worst_pipes(pipe_df: pd.DataFrame, display_unit: str = "m"):
         color="project_no",
         text=top["repair_ratio"].map(lambda value: f"{value:.2%}"),
         custom_data=["repair_amount_display", "repair_count"],
-        title="Worst Pipes in Dimension",
+        title=f"Worst {top_n} Pipes in Dimension",
         color_discrete_sequence=["#dc2626", "#f97316", "#2563eb", "#16a34a", "#7c3aed", "#0891b2"],
     )
     max_ratio = top["repair_ratio"].max()
