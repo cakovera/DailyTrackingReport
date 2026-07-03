@@ -75,7 +75,7 @@ def upsert_project_group_config(
 try:
     from project_parser import parse_project_pipe_repairs
     from pipe_analysis import reconcile_pipe_projects
-    from project_pdf_report import build_project_pipe_pdf_report
+    from project_pdf_report import build_dimension_pipe_pdf_report, build_project_pipe_pdf_report
 
     load_pipe_repair_details = db.load_pipe_repair_details
     upsert_pipe_repair_details = db.upsert_pipe_repair_details
@@ -101,6 +101,12 @@ if "project_pdf_report_name" not in st.session_state:
     st.session_state.project_pdf_report_name = None
 if "project_pdf_report_key" not in st.session_state:
     st.session_state.project_pdf_report_key = None
+if "dimension_pdf_report" not in st.session_state:
+    st.session_state.dimension_pdf_report = None
+if "dimension_pdf_report_name" not in st.session_state:
+    st.session_state.dimension_pdf_report_name = None
+if "dimension_pdf_report_key" not in st.session_state:
+    st.session_state.dimension_pdf_report_key = None
 if "project_group_config_key" not in st.session_state:
     st.session_state.project_group_config_key = None
 if "pipe_group_spec_input" not in st.session_state:
@@ -1118,6 +1124,42 @@ A:1-10,26-34; B:11-25
                                 ),
                                 use_container_width=True,
                             )
+
+                    dimension_report_key = (
+                        f"{selected_date}|{selected_dimension_for_pipe}|{display_unit}|"
+                        f"{','.join(selected_dimension_sheets)}|{dimension_worst_top_n}|{dimension_bin_size}"
+                    )
+                    if st.button("Generate Dimension A3 PDF Report"):
+                        with st.spinner("Preparing dimension PDF report..."):
+                            st.session_state.dimension_pdf_report = build_dimension_pipe_pdf_report(
+                                dimension_pipe_df,
+                                selected_dimension_for_pipe,
+                                selected_dimension_projects,
+                                selected_date,
+                                display_unit,
+                                worst_top_n=dimension_worst_top_n,
+                                bin_size=dimension_bin_size,
+                                pipe_group_df=dimension_pipe_groups_df,
+                                machine_group_df=dimension_machine_groups_df,
+                            )
+                            safe_dimension = "".join(
+                                char if char.isalnum() or char in "-_" else "_"
+                                for char in str(selected_dimension_for_pipe)
+                            ).strip("_")
+                            st.session_state.dimension_pdf_report_name = (
+                                f"dimension_pipe_analysis_{safe_dimension}_{selected_date}.pdf"
+                            )
+                            st.session_state.dimension_pdf_report_key = dimension_report_key
+                    if (
+                        st.session_state.dimension_pdf_report
+                        and st.session_state.dimension_pdf_report_key == dimension_report_key
+                    ):
+                        st.download_button(
+                            "Download Dimension A3 PDF Report",
+                            data=st.session_state.dimension_pdf_report,
+                            file_name=st.session_state.dimension_pdf_report_name,
+                            mime="application/pdf",
+                        )
 else:
     st.info("Pipe-level project sheet data is not loaded for the selected date.")
 
