@@ -1017,8 +1017,8 @@ A:1-10,26-34; B:11-25
                     with control_right:
                         dimension_bin_size = st.selectbox(
                             "Trend interval size",
-                            [5, 10, 15, 20],
-                            index=1,
+                            [1, 5, 10, 15, 20],
+                            index=2,
                             key="dimension_pipe_bin_size",
                         )
 
