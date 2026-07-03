@@ -19,8 +19,8 @@ from calculations import amount_in_display_unit, unit_label
 
 
 CHART_DPI = 260
-CHART_SIZE = (9.6, 3.5)
-WIDE_CHART_SIZE = (19.2, 4.7)
+CHART_SIZE = (10.4, 4.1)
+WIDE_CHART_SIZE = (19.2, 5.2)
 GROUP_COLORS = ["#2563eb", "#f97316", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"]
 
 
@@ -36,7 +36,7 @@ def _style_axes(ax, title: str) -> None:
     ax.spines["bottom"].set_color("#cbd5e1")
 
 
-def _image(fig, width_cm: float = 19.8, height_cm: float = 7.0) -> Image:
+def _image(fig, width_cm: float = 19.8, height_cm: float = 7.6) -> Image:
     buffer = BytesIO()
     fig.tight_layout(pad=1.0)
     fig.savefig(buffer, format="png", dpi=CHART_DPI, bbox_inches="tight", facecolor="white")
@@ -229,7 +229,7 @@ def _group_trend_chart(group_df: pd.DataFrame, group_column: str, title: str, di
     ax.set_ylabel("Repair Ratio", fontsize=8)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=4, fontsize=8, frameon=False)
     _style_axes(ax, title)
-    return _image(fig, width_cm=38.0, height_cm=9.3)
+    return _image(fig, width_cm=38.0, height_cm=10.2)
 
 
 def _group_comparison_chart(group_df: pd.DataFrame, group_column: str, title: str, display_unit: str) -> Image:
@@ -249,7 +249,7 @@ def _group_comparison_chart(group_df: pd.DataFrame, group_column: str, title: st
         )
     grouped = pd.DataFrame(rows)
 
-    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    fig, ax = plt.subplots(figsize=WIDE_CHART_SIZE)
     positions = range(len(grouped))
     bars = ax.bar(positions, grouped["avg_repair_ratio"], color=[GROUP_COLORS[i % len(GROUP_COLORS)] for i in positions])
     ax.bar_label(
@@ -277,7 +277,7 @@ def _group_comparison_chart(group_df: pd.DataFrame, group_column: str, title: st
     ax.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
     ax.set_ylabel("Average Repair Ratio", fontsize=8)
     _style_axes(ax, title)
-    return _image(fig)
+    return _image(fig, width_cm=38.0, height_cm=9.6)
 
 
 def _dimension_project_comparison_chart(pipe_df: pd.DataFrame, display_unit: str) -> Image:
@@ -295,7 +295,7 @@ def _dimension_project_comparison_chart(pipe_df: pd.DataFrame, display_unit: str
         .sort_values("avg_repair_ratio", ascending=False)
     )
 
-    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    fig, ax = plt.subplots(figsize=WIDE_CHART_SIZE)
     positions = range(len(grouped))
     bars = ax.bar(positions, grouped["avg_repair_ratio"], color="#2563eb")
     ax.bar_label(
@@ -323,7 +323,7 @@ def _dimension_project_comparison_chart(pipe_df: pd.DataFrame, display_unit: str
     ax.yaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
     ax.set_ylabel("Average Repair Ratio", fontsize=8)
     _style_axes(ax, "Dimension Project Comparison")
-    return _image(fig)
+    return _image(fig, width_cm=38.0, height_cm=9.6)
 
 
 def _dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str, top_n: int) -> Image:
@@ -338,7 +338,7 @@ def _dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str, top_n
     )
     top = data.nlargest(max(int(top_n or 15), 1), "repair_ratio").sort_values("repair_ratio")
 
-    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    fig, ax = plt.subplots(figsize=WIDE_CHART_SIZE)
     bars = ax.barh(top["label"], top["repair_ratio"], color="#dc2626")
     ax.bar_label(
         bars,
@@ -355,7 +355,7 @@ def _dimension_worst_pipes_chart(pipe_df: pd.DataFrame, display_unit: str, top_n
     ax.xaxis.set_major_formatter(lambda value, _: f"{value:.1%}")
     ax.set_xlabel("Repair Ratio", fontsize=8)
     _style_axes(ax, f"Worst {len(top)} Pipes in Dimension")
-    return _image(fig)
+    return _image(fig, width_cm=38.0, height_cm=9.6)
 
 
 def _group_binned_trend_chart(
@@ -412,7 +412,7 @@ def _group_binned_trend_chart(
     ax.set_ylabel("Average Repair Ratio", fontsize=8)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=4, fontsize=8, frameon=False)
     _style_axes(ax, f"{title} - {bin_size} Pipe Average")
-    return _image(fig, width_cm=38.0, height_cm=9.3)
+    return _image(fig, width_cm=38.0, height_cm=10.2)
 
 
 def _styled_table(rows, widths, font_size=8) -> Table:
@@ -542,7 +542,7 @@ def build_project_pipe_pdf_report(
             [_joint_distribution_chart(pipe_df), _joint_repair_chart(pipe_df, display_unit)],
         ],
         colWidths=[20.4 * cm, 20.4 * cm],
-        rowHeights=[7.5 * cm, 7.5 * cm],
+        rowHeights=[8.1 * cm, 8.1 * cm],
     )
     chart_grid.setStyle(
         TableStyle(
@@ -713,9 +713,12 @@ def build_dimension_pipe_pdf_report(
     )
 
     chart_grid = Table(
-        [[_dimension_project_comparison_chart(data, display_unit), _dimension_worst_pipes_chart(data, display_unit, worst_top_n)]],
-        colWidths=[20.4 * cm, 20.4 * cm],
-        rowHeights=[7.5 * cm],
+        [
+            [_dimension_project_comparison_chart(data, display_unit)],
+            [_dimension_worst_pipes_chart(data, display_unit, worst_top_n)],
+        ],
+        colWidths=[40.8 * cm],
+        rowHeights=[9.8 * cm, 9.8 * cm],
     )
     chart_grid.setStyle(
         TableStyle(
