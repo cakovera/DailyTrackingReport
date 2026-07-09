@@ -791,10 +791,11 @@ trend_start_index = trend_default_start_index
 if len(trend_available_dates) > trend_window_size:
     trend_start_options = trend_available_dates[: len(trend_available_dates) - trend_window_size + 1]
     trend_start_date = st.select_slider(
-        "Daily trend window start",
+        "Trend window start",
         options=trend_start_options,
         value=trend_start_options[trend_default_start_index],
         format_func=lambda value: value.strftime("%Y-%m-%d"),
+        help="Controls both daily repair ratio trends and repair amount trend.",
     )
     trend_start_index = trend_available_dates.index(trend_start_date)
 trend_end_index = min(trend_start_index + trend_window_size, len(trend_available_dates))
@@ -843,6 +844,8 @@ if baseline_for_filtered.empty:
 else:
     st.caption(f"Historical baseline included in production-type weighted ratios: {len(baseline_for_filtered)} projects")
 
+st.subheader("Repair Amount Trend")
+st.caption("Uses the same selected trend window shown above.")
 st.plotly_chart(cached_chart_repair_amount_trend(trend_filtered_to_selected_date, display_unit), use_container_width=True)
 
 left, right = st.columns(2)
