@@ -843,7 +843,7 @@ if baseline_for_filtered.empty:
 else:
     st.caption(f"Historical baseline included in production-type weighted ratios: {len(baseline_for_filtered)} projects")
 
-st.plotly_chart(cached_chart_repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
+st.plotly_chart(cached_chart_repair_amount_trend(trend_filtered_to_selected_date, display_unit), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
