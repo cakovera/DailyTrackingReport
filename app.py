@@ -78,6 +78,7 @@ try:
     from project_pdf_report import build_dimension_pipe_pdf_report, build_project_pipe_pdf_report
 
     load_pipe_repair_details = db.load_pipe_repair_details
+    load_pipe_repair_details_for_date = db.load_pipe_repair_details_for_date
     upsert_pipe_repair_details = db.upsert_pipe_repair_details
     PIPE_ANALYSIS_AVAILABLE = True
     PIPE_ANALYSIS_IMPORT_ERROR = ""
@@ -113,6 +114,186 @@ if "pipe_group_spec_input" not in st.session_state:
     st.session_state.pipe_group_spec_input = ""
 if "machine_group_spec_input" not in st.session_state:
     st.session_state.machine_group_spec_input = ""
+if "data_refresh_version" not in st.session_state:
+    st.session_state.data_refresh_version = 0
+
+
+def refresh_cached_data() -> None:
+    st.session_state.data_refresh_version += 1
+    st.cache_data.clear()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_dashboard_data(refresh_version: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    del refresh_version
+    master = load_master_data()
+    baseline = load_historical_baselines()
+    return master, baseline
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_selected_date_pipe_data(refresh_version: int, selected_date) -> pd.DataFrame:
+    del refresh_version
+    if not PIPE_ANALYSIS_AVAILABLE:
+        return pd.DataFrame()
+    return load_pipe_repair_details_for_date(selected_date)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_project_group_config(
+    refresh_version: int,
+    project_sheet: str,
+    project_no: str,
+    dimensions: str,
+) -> dict[str, str] | None:
+    del refresh_version
+    return load_project_group_config(project_sheet, project_no, dimensions)
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def cached_reconciled_projects(daily_df: pd.DataFrame, pipe_df: pd.DataFrame) -> pd.DataFrame:
+    return reconcile_pipe_projects(daily_df, pipe_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def cached_dimension_pipe_frame(
+    selected_pipe_df: pd.DataFrame,
+    reconciled_projects: pd.DataFrame,
+    project_sheets: tuple[str, ...],
+) -> pd.DataFrame:
+    return build_dimension_pipe_frame(selected_pipe_df, reconciled_projects, list(project_sheets))
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def cached_apply_project_saved_groups(
+    refresh_version: int,
+    dimension_pipe_df: pd.DataFrame,
+    reconciled_selection: pd.DataFrame,
+    config_field: str,
+    fallback_label: str,
+    prefix_project: bool = True,
+    fallback_when_missing: bool = True,
+) -> tuple[pd.DataFrame, list[str]]:
+    del refresh_version
+    return apply_project_saved_groups(
+        dimension_pipe_df,
+        reconciled_selection,
+        config_field,
+        fallback_label,
+        prefix_project=prefix_project,
+        fallback_when_missing=fallback_when_missing,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame):
+    return charts.overall_daily_trend(df, baseline_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_repair_amount_trend(df: pd.DataFrame, display_unit: str):
+    return charts.repair_amount_trend(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_worst_projects_today(df: pd.DataFrame, selected_date):
+    return charts.worst_projects_today(df, selected_date)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_project_trend(df: pd.DataFrame, selected_project: str):
+    return charts.project_trend(df, selected_project)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_production_type_analysis(df: pd.DataFrame, baseline_df: pd.DataFrame):
+    return charts.production_type_analysis(df, baseline_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_dimension_analysis(df: pd.DataFrame):
+    return charts.dimension_analysis(df)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_status_comparison(df: pd.DataFrame, display_unit: str):
+    return charts.status_comparison(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_historical_benchmark_comparison(df: pd.DataFrame, baseline_df: pd.DataFrame):
+    return charts.historical_benchmark_comparison(df, baseline_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_skelp_impact_analysis(df: pd.DataFrame, display_unit: str):
+    return charts.skelp_impact_analysis(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_repair_amount_pareto(df: pd.DataFrame, display_unit: str):
+    return charts.repair_amount_pareto(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_group_repair_ratio_trend(
+    df: pd.DataFrame,
+    group_column: str,
+    display_unit: str,
+    group_title: str = "Pipe Group",
+):
+    return charts.pipe_group_repair_ratio_trend(df, group_column, display_unit, group_title=group_title)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_group_comparison(
+    df: pd.DataFrame,
+    group_column: str,
+    display_unit: str,
+    group_title: str = "Pipe Group",
+):
+    return charts.pipe_group_comparison(df, group_column, display_unit, group_title=group_title)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_repair_amount_pareto(df: pd.DataFrame, display_unit: str):
+    return charts.pipe_repair_amount_pareto(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_worst_ratio(df: pd.DataFrame, display_unit: str):
+    return charts.pipe_worst_ratio(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_joint_count_distribution(df: pd.DataFrame, display_unit: str):
+    return charts.pipe_joint_count_distribution(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_joint_count_vs_repair(df: pd.DataFrame, display_unit: str):
+    return charts.pipe_joint_count_vs_repair(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_dimension_project_comparison(df: pd.DataFrame, display_unit: str):
+    return dimension_project_comparison_chart(df, display_unit)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_dimension_worst_pipes(df: pd.DataFrame, display_unit: str, top_n: int):
+    return dimension_worst_pipes_chart(df, display_unit, top_n)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_pipe_group_binned_trend(
+    df: pd.DataFrame,
+    group_column: str,
+    display_unit: str,
+    group_title: str,
+    bin_size: int,
+):
+    return pipe_group_binned_trend_chart(df, group_column, display_unit, group_title, bin_size)
 
 
 def format_preview(df: pd.DataFrame, display_unit: str = "m") -> pd.DataFrame:
@@ -372,6 +553,9 @@ with st.sidebar:
         st.caption("Database: Supabase")
     else:
         st.caption(f"Database: SQLite ({DB_PATH})")
+    if st.button("Refresh dashboard data"):
+        refresh_cached_data()
+        st.rerun()
     st.divider()
     st.header("Display")
     display_unit = st.radio(
@@ -441,6 +625,7 @@ if uploaded is not None:
                         st.warning("Repair import tamamlandı; pipe-level kayıtlar yazılamadı.")
                         st.info("Supabase kullanıyorsanız supabase_pipe_repair_details.sql dosyasını SQL Editor'da çalıştırın.")
                         st.code(str(pipe_exc), language="text")
+                refresh_cached_data()
                 st.session_state.last_import_summary = {
                     "affected": affected,
                     "pipe_affected": pipe_affected,
@@ -468,6 +653,7 @@ if baseline_upload is not None:
         if st.button("Confirm Historical Baseline Import", type="primary"):
             try:
                 affected = upsert_historical_baselines(baseline_df)
+                refresh_cached_data()
                 st.success(f"Historical baseline import tamamlandi. {affected} satir islendi.")
             except Exception as exc:
                 st.error("Historical baseline database yazma hatasi olustu.")
@@ -485,9 +671,7 @@ if st.session_state.last_import_summary:
 st.divider()
 
 try:
-    master_df = load_master_data()
-    baseline_master_df = load_historical_baselines()
-    pipe_master_df = load_pipe_repair_details() if PIPE_ANALYSIS_AVAILABLE else pd.DataFrame()
+    master_df, baseline_master_df = load_dashboard_data(st.session_state.data_refresh_version)
 except Exception as exc:
     st.error("Database bağlantısı kurulamadı veya Supabase tablosu hazır değil.")
     st.info("Supabase kullanıyorsanız önce SQL Editor içinde supabase_setup.sql dosyasındaki script'i çalıştırın.")
@@ -531,11 +715,12 @@ if not baseline_for_filtered.empty:
         & baseline_for_filtered["production_type"].isin(baseline_type_filter)
         & baseline_for_filtered["include_in_dashboard"]
     ].copy()
-selected_pipe_df = (
-    pipe_master_df[pipe_master_df["date"].dt.date == selected_date].copy()
-    if not pipe_master_df.empty and "date" in pipe_master_df.columns
-    else pd.DataFrame()
-)
+try:
+    selected_pipe_df = load_selected_date_pipe_data(st.session_state.data_refresh_version, selected_date)
+except Exception as exc:
+    st.warning("Pipe-level data could not be loaded for the selected date.")
+    st.code(str(exc), language="text")
+    selected_pipe_df = pd.DataFrame()
 
 if "production_type" in selected_date_df.columns and not selected_date_df.empty:
     st.subheader("Production Type KPIs")
@@ -589,45 +774,45 @@ if st.session_state.pdf_report:
         mime="application/pdf",
     )
 
-st.plotly_chart(charts.overall_daily_trend(filtered_to_selected_date, baseline_for_filtered), use_container_width=True)
+st.plotly_chart(cached_chart_overall_daily_trend(filtered_to_selected_date, baseline_for_filtered), use_container_width=True)
 if baseline_for_filtered.empty:
     st.caption("Historical baseline is not loaded.")
 else:
     st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_for_filtered)} projects")
 
-st.plotly_chart(charts.repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
+st.plotly_chart(cached_chart_repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.worst_projects_today(selected_date_df, selected_date), use_container_width=True)
+    st.plotly_chart(cached_chart_worst_projects_today(selected_date_df, selected_date), use_container_width=True)
 with right:
     projects = sorted(selected_date_df["project_no"].unique())
     selected_project = st.selectbox("Project", projects)
-    st.plotly_chart(charts.project_trend(filtered_to_selected_date, selected_project), use_container_width=True)
+    st.plotly_chart(cached_chart_project_trend(filtered_to_selected_date, selected_project), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
     st.plotly_chart(
-        charts.production_type_analysis(selected_date_df, baseline_for_filtered),
+        cached_chart_production_type_analysis(selected_date_df, baseline_for_filtered),
         use_container_width=True,
     )
 with right:
-    st.plotly_chart(charts.dimension_analysis(selected_date_df), use_container_width=True)
+    st.plotly_chart(cached_chart_dimension_analysis(selected_date_df), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.status_comparison(selected_date_df, display_unit), use_container_width=True)
+    st.plotly_chart(cached_chart_status_comparison(selected_date_df, display_unit), use_container_width=True)
 with right:
-    st.plotly_chart(charts.historical_benchmark_comparison(selected_date_df, baseline_for_filtered), use_container_width=True)
+    st.plotly_chart(cached_chart_historical_benchmark_comparison(selected_date_df, baseline_for_filtered), use_container_width=True)
 
 left, right = st.columns(2)
 with left:
-    st.plotly_chart(charts.skelp_impact_analysis(selected_date_df, display_unit), use_container_width=True)
+    st.plotly_chart(cached_chart_skelp_impact_analysis(selected_date_df, display_unit), use_container_width=True)
 with right:
-    st.plotly_chart(charts.repair_amount_pareto(selected_date_df, display_unit), use_container_width=True)
+    st.plotly_chart(cached_chart_repair_amount_pareto(selected_date_df, display_unit), use_container_width=True)
 
 if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
-    reconciled_projects = reconcile_pipe_projects(selected_date_df, selected_pipe_df)
+    reconciled_projects = cached_reconciled_projects(selected_date_df, selected_pipe_df)
     st.subheader("Project Pipe Analysis")
     if reconciled_projects.empty:
         st.warning(
@@ -678,7 +863,12 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
         project_group_config_key = f"{selected_sheet}|{project_no}|{dimensions}"
         if st.session_state.project_group_config_key != project_group_config_key:
             try:
-                saved_config = load_project_group_config(selected_sheet, project_no, dimensions)
+                saved_config = cached_project_group_config(
+                    st.session_state.data_refresh_version,
+                    selected_sheet,
+                    project_no,
+                    dimensions,
+                )
             except Exception as config_exc:
                 saved_config = None
                 st.warning(
@@ -750,7 +940,7 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
             left, right = st.columns(2)
             with left:
                 st.plotly_chart(
-                    charts.pipe_group_repair_ratio_trend(
+                    cached_chart_pipe_group_repair_ratio_trend(
                         machine_pipe_df,
                         "pipe_group",
                         display_unit,
@@ -759,7 +949,7 @@ if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
                 )
             with right:
                 st.plotly_chart(
-                    charts.pipe_group_comparison(
+                    cached_chart_pipe_group_comparison(
                         machine_pipe_df,
                         "pipe_group",
                         display_unit,
@@ -805,6 +995,7 @@ A:1-10,26-34; B:11-25
                     st.session_state.pipe_group_spec_input,
                     st.session_state.machine_group_spec_input,
                 )
+                refresh_cached_data()
                 st.success("Group settings saved for this project.")
             except Exception as save_exc:
                 st.error("Group settings could not be saved.")
@@ -856,7 +1047,7 @@ A:1-10,26-34; B:11-25
                     left, right = st.columns(2)
                     with left:
                         st.plotly_chart(
-                            charts.pipe_group_repair_ratio_trend(
+                            cached_chart_pipe_group_repair_ratio_trend(
                                 machine_compare_df,
                                 "pipe_group",
                                 display_unit,
@@ -866,7 +1057,7 @@ A:1-10,26-34; B:11-25
                         )
                     with right:
                         st.plotly_chart(
-                            charts.pipe_group_comparison(
+                            cached_chart_pipe_group_comparison(
                                 machine_compare_df,
                                 "pipe_group",
                                 display_unit,
@@ -908,23 +1099,23 @@ A:1-10,26-34; B:11-25
         left, right = st.columns(2)
         with left:
             st.plotly_chart(
-                charts.pipe_repair_amount_pareto(project_pipe_df, display_unit),
+                cached_chart_pipe_repair_amount_pareto(project_pipe_df, display_unit),
                 use_container_width=True,
             )
         with right:
             st.plotly_chart(
-                charts.pipe_worst_ratio(project_pipe_df, display_unit),
+                cached_chart_pipe_worst_ratio(project_pipe_df, display_unit),
                 use_container_width=True,
             )
         left, right = st.columns(2)
         with left:
             st.plotly_chart(
-                charts.pipe_joint_count_distribution(project_pipe_df, display_unit),
+                cached_chart_pipe_joint_count_distribution(project_pipe_df, display_unit),
                 use_container_width=True,
             )
         with right:
             st.plotly_chart(
-                charts.pipe_joint_count_vs_repair(project_pipe_df, display_unit),
+                cached_chart_pipe_joint_count_vs_repair(project_pipe_df, display_unit),
                 use_container_width=True,
             )
 
@@ -985,10 +1176,10 @@ A:1-10,26-34; B:11-25
                 selected_dimension_projects = dimension_projects[
                     dimension_projects["project_sheet"].isin(selected_dimension_sheets)
                 ].copy()
-                dimension_pipe_df = build_dimension_pipe_frame(
+                dimension_pipe_df = cached_dimension_pipe_frame(
                     selected_pipe_df,
                     reconciled_projects,
-                    selected_dimension_sheets,
+                    tuple(selected_dimension_sheets),
                 )
                 if dimension_pipe_df.empty:
                     st.warning("No pipe-level rows were found for the selected dimension/project combination.")
@@ -1025,16 +1216,17 @@ A:1-10,26-34; B:11-25
                     left, right = st.columns(2)
                     with left:
                         st.plotly_chart(
-                            dimension_project_comparison_chart(dimension_pipe_df, display_unit),
+                            cached_chart_dimension_project_comparison(dimension_pipe_df, display_unit),
                             use_container_width=True,
                         )
                     with right:
                         st.plotly_chart(
-                            dimension_worst_pipes_chart(dimension_pipe_df, display_unit, dimension_worst_top_n),
+                            cached_chart_dimension_worst_pipes(dimension_pipe_df, display_unit, dimension_worst_top_n),
                             use_container_width=True,
                         )
 
-                    dimension_pipe_groups_df, dimension_pipe_group_warnings = apply_project_saved_groups(
+                    dimension_pipe_groups_df, dimension_pipe_group_warnings = cached_apply_project_saved_groups(
+                        st.session_state.data_refresh_version,
                         dimension_pipe_df,
                         selected_dimension_projects,
                         "pipe_groups",
@@ -1057,7 +1249,7 @@ A:1-10,26-34; B:11-25
                         left, right = st.columns(2)
                         with left:
                             st.plotly_chart(
-                                pipe_group_binned_trend_chart(
+                                cached_chart_pipe_group_binned_trend(
                                     dimension_pipe_groups_df,
                                     "pipe_group",
                                     display_unit,
@@ -1068,7 +1260,7 @@ A:1-10,26-34; B:11-25
                             )
                         with right:
                             st.plotly_chart(
-                                charts.pipe_group_comparison(
+                                cached_chart_pipe_group_comparison(
                                     dimension_pipe_groups_df,
                                     "pipe_group",
                                     display_unit,
@@ -1077,7 +1269,8 @@ A:1-10,26-34; B:11-25
                                 use_container_width=True,
                             )
 
-                    dimension_machine_groups_df, dimension_machine_group_warnings = apply_project_saved_groups(
+                    dimension_machine_groups_df, dimension_machine_group_warnings = cached_apply_project_saved_groups(
+                        st.session_state.data_refresh_version,
                         dimension_pipe_df,
                         selected_dimension_projects,
                         "machine_groups",
@@ -1105,7 +1298,7 @@ A:1-10,26-34; B:11-25
                         left, right = st.columns(2)
                         with left:
                             st.plotly_chart(
-                                pipe_group_binned_trend_chart(
+                                cached_chart_pipe_group_binned_trend(
                                     dimension_machine_groups_df,
                                     "pipe_group",
                                     display_unit,
@@ -1116,7 +1309,7 @@ A:1-10,26-34; B:11-25
                             )
                         with right:
                             st.plotly_chart(
-                                charts.pipe_group_comparison(
+                                cached_chart_pipe_group_comparison(
                                     dimension_machine_groups_df,
                                     "pipe_group",
                                     display_unit,

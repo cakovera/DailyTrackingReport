@@ -458,10 +458,55 @@ def load_pipe_repair_details(conn: sqlite3.Connection | None = None) -> pd.DataF
         if should_close:
             conn.close()
 
+    return _normalize_pipe_repair_details(df)
+
+
+def load_pipe_repair_details_for_date(selected_date, conn: sqlite3.Connection | None = None) -> pd.DataFrame:
+    date_text = pd.to_datetime(selected_date).date().isoformat()
+    if get_backend_name() == "supabase":
+        client = _get_supabase_client()
+        try:
+            rows: list[dict[str, Any]] = []
+            page_size = 1000
+            for start in range(0, 100_000, page_size):
+                response = (
+                    client.table(PIPE_TABLE_NAME)
+                    .select("*")
+                    .eq("date", date_text)
+                    .order("project_sheet")
+                    .range(start, start + page_size - 1)
+                    .execute()
+                )
+                rows.extend(response.data)
+                if len(response.data) < page_size:
+                    break
+        except Exception as exc:
+            if PIPE_TABLE_NAME in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
+                return pd.DataFrame()
+            raise
+        return _normalize_pipe_repair_details(pd.DataFrame(rows))
+
+    should_close = conn is None
+    conn = conn or get_connection()
+    init_db(conn)
+    df = pd.read_sql_query(
+        "SELECT * FROM pipe_repair_details WHERE date = ? ORDER BY project_sheet, pipe_no",
+        conn,
+        params=(date_text,),
+    )
+    if should_close:
+        conn.close()
+    return _normalize_pipe_repair_details(df)
+
+
+def _normalize_pipe_repair_details(df: pd.DataFrame) -> pd.DataFrame:
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         placeholder_mask = pd.to_numeric(df["repair_amount"], errors="coerce").le(0.0001)
         df.loc[placeholder_mask, ["repair_amount", "repair_ratio"]] = 0.0
+        sort_columns = [column for column in ["date", "project_sheet", "pipe_no"] if column in df.columns]
+        if sort_columns:
+            df = df.sort_values(sort_columns).reset_index(drop=True)
     return df
 
 
