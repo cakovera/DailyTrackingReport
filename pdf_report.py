@@ -200,7 +200,7 @@ def _production_type_trend_chart(
             label="Repair Ratio incl. Skelp",
         )
         label_mask = _label_every_third_and_last(grouped["date"])
-        _add_selected_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], label_mask, _pct, "#2563eb", 14)
+        _add_selected_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], label_mask, _pct, "#2563eb", 8)
         _add_selected_point_labels(
             ax,
             grouped["date"],
@@ -208,7 +208,7 @@ def _production_type_trend_chart(
             label_mask,
             _pct,
             "#dc2626",
-            -22,
+            -14,
         )
         latest = grouped.iloc[-1]
         ax.scatter(
