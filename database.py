@@ -198,6 +198,20 @@ def _get_supabase_client():
     return create_client(url, key)
 
 
+def _fetch_supabase_table(table_name: str, order_columns: tuple[str, ...], page_size: int = 1000) -> list[dict[str, Any]]:
+    client = _get_supabase_client()
+    rows: list[dict[str, Any]] = []
+    for start in range(0, 100_000, page_size):
+        query = client.table(table_name).select("*")
+        for column in order_columns:
+            query = query.order(column)
+        response = query.range(start, start + page_size - 1).execute()
+        rows.extend(response.data)
+        if len(response.data) < page_size:
+            break
+    return rows
+
+
 def init_db(conn: sqlite3.Connection | None = None) -> None:
     if get_backend_name() == "supabase":
         return
@@ -383,9 +397,7 @@ def upsert_repair_rates(df: pd.DataFrame, conn: sqlite3.Connection | None = None
 
 def load_master_data(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
     if get_backend_name() == "supabase":
-        client = _get_supabase_client()
-        response = client.table(TABLE_NAME).select("*").order("date").execute()
-        df = pd.DataFrame(response.data)
+        df = pd.DataFrame(_fetch_supabase_table(TABLE_NAME, ("date", "project_no", "dimensions")))
     else:
         should_close = conn is None
         conn = conn or get_connection()
@@ -530,14 +542,13 @@ def upsert_historical_baselines(df: pd.DataFrame, conn: sqlite3.Connection | Non
 
 def load_historical_baselines(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
     if get_backend_name() == "supabase":
-        client = _get_supabase_client()
         try:
-            response = client.table(BASELINE_TABLE_NAME).select("*").order("project_no").execute()
+            rows = _fetch_supabase_table(BASELINE_TABLE_NAME, ("project_no", "dimensions"))
         except Exception as exc:
             if "historical_baselines" in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
                 return pd.DataFrame()
             raise
-        df = pd.DataFrame(response.data)
+        df = pd.DataFrame(rows)
         from baseline import enrich_historical_baseline_metadata
 
         return enrich_historical_baseline_metadata(df)

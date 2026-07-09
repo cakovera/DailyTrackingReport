@@ -1015,12 +1015,6 @@ if not baseline_for_filtered.empty:
         & baseline_for_filtered["production_type"].isin(baseline_type_filter)
         & baseline_for_filtered["include_in_dashboard"]
     ].copy()
-try:
-    selected_pipe_df = load_selected_date_pipe_data(st.session_state.data_refresh_version, selected_date)
-except Exception as exc:
-    st.warning("Pipe-level data could not be loaded for the selected date.")
-    st.code(str(exc), language="text")
-    selected_pipe_df = pd.DataFrame()
 
 if view_mode == "Presentation Mode":
     presentation_date_df, presentation_history_df = render_presentation_project_selector(
@@ -1275,6 +1269,13 @@ with left:
     st.plotly_chart(cached_chart_skelp_impact_analysis(selected_date_df, display_unit), use_container_width=True)
 with right:
     st.plotly_chart(cached_chart_repair_amount_pareto(selected_date_df, display_unit), use_container_width=True)
+
+try:
+    selected_pipe_df = load_selected_date_pipe_data(st.session_state.data_refresh_version, selected_date)
+except Exception as exc:
+    st.warning("Pipe-level data could not be loaded for the selected date.")
+    st.code(str(exc), language="text")
+    selected_pipe_df = pd.DataFrame()
 
 if not selected_pipe_df.empty and PIPE_ANALYSIS_AVAILABLE:
     reconciled_projects = cached_reconciled_projects(selected_date_df, selected_pipe_df)
