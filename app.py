@@ -699,6 +699,59 @@ def add_selection_key(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def changed_project_keys_in_recent_window(
+    current: pd.DataFrame,
+    history: pd.DataFrame,
+    window_days: int = 3,
+) -> list[str]:
+    if current.empty or history.empty:
+        return []
+    history = history.copy()
+    history["date"] = pd.to_datetime(history["date"])
+    recent_dates = sorted(history["date"].dt.date.unique())[-window_days:]
+    current_keys = set(current["_selection_key"].dropna().tolist())
+    changed_keys: list[str] = []
+    numeric_columns = [
+        "qty",
+        "repaired_spiral_length",
+        "total_repair_amount",
+        "total_repair_amount_incl_skelp",
+        "repair_ratio",
+        "repair_ratio_incl_skelp",
+    ]
+    text_columns = ["project_status"]
+
+    def numeric_value(value) -> float:
+        return 0.0 if pd.isna(value) else float(value)
+
+    for key in current["_selection_key"].dropna().tolist():
+        project_history = history[history["_selection_key"].eq(key)].sort_values("date")
+        recent_project_rows = project_history[project_history["date"].dt.date.isin(recent_dates)]
+        if recent_project_rows.empty:
+            continue
+        for _, row in recent_project_rows.iterrows():
+            previous_rows = project_history[project_history["date"].lt(row["date"])]
+            if previous_rows.empty:
+                changed_keys.append(key)
+                break
+            previous = previous_rows.iloc[-1]
+            numeric_changed = any(
+                abs(numeric_value(row[column]) - numeric_value(previous[column])) > 1e-9
+                for column in numeric_columns
+                if column in row.index and column in previous.index
+            )
+            text_changed = any(
+                str(row[column]) != str(previous[column])
+                for column in text_columns
+                if column in row.index and column in previous.index
+            )
+            if numeric_changed or text_changed:
+                changed_keys.append(key)
+                break
+
+    return [key for key in changed_keys if key in current_keys]
+
+
 def render_presentation_project_selector(
     selected_date_df: pd.DataFrame,
     filtered_to_selected_date: pd.DataFrame,
@@ -710,17 +763,22 @@ def render_presentation_project_selector(
         row["_selection_key"]: project_selection_label(row)
         for _, row in current.iterrows()
     }
-    default_keys = current.loc[current["project_status"].eq("In Progress"), "_selection_key"].tolist()
-    if not default_keys:
-        default_keys = options
+    default_keys = changed_project_keys_in_recent_window(current, history, window_days=3)
 
     selected_keys = st.multiselect(
         "Projects for presentation",
         options=options,
         default=default_keys,
         format_func=lambda key: labels.get(key, key),
-        help="Default selection is the projects currently In Progress on the selected date.",
+        help=(
+            "Default selection contains projects changed in the last 3 report days, "
+            "including the selected date. You can still add or remove projects manually."
+        ),
     )
+    if default_keys:
+        st.caption(f"Default selection: {len(default_keys)} project(s) changed in the last 3 report days.")
+    else:
+        st.caption("No default projects found with changes in the last 3 report days.")
     if not selected_keys:
         st.warning("Select at least one project to build the presentation view.")
         return current.iloc[0:0].copy(), history.iloc[0:0].copy()
