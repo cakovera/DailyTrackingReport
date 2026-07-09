@@ -168,7 +168,7 @@ def _worst_projects_chart(df: pd.DataFrame, selected_date):
     max_value = daily["repair_ratio"].max()
     ax.set_xlim(0, max_value * 1.22 if pd.notna(max_value) and max_value else 1)
     ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
-    _style_axes(ax, "Worst Projects Today")
+    _style_axes(ax, "Highest Repair Ratio Projects")
     ax.tick_params(axis="y", labelsize=7.4)
     return _figure_to_image(fig)
 
@@ -660,7 +660,7 @@ def build_a3_pdf_report(
                 _pct(row["repair_ratio_incl_skelp"]),
             ]
         )
-    story.extend([Paragraph("Worst Projects Today", section_style), _table(worst_rows, font_size=7.4)])
+    story.extend([Paragraph("Highest Repair Ratio Projects", section_style), _table(worst_rows, font_size=7.4)])
 
     dimension = (
         daily.groupby("dimensions", as_index=False)

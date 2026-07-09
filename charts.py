@@ -176,7 +176,7 @@ def worst_projects_today(df: pd.DataFrame, selected_date):
         color="project_status",
         color_discrete_map=STATUS_COLORS,
         orientation="h",
-        title="Worst Projects Today",
+        title="Highest Repair Ratio Projects",
     )
     fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="Repair Ratio", yaxis_title="Project / Dimension")
     fig.update_xaxes(tickformat=".2%")
