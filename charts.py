@@ -83,11 +83,9 @@ def production_type_daily_trend(
             x=grouped["date"],
             y=grouped["weighted_repair_ratio"],
             name="Repair Ratio",
-            mode="lines+markers+text",
+            mode="lines+markers",
             line={"color": "#2563eb", "width": 4},
             marker={"size": 9},
-            text=ratio_labels,
-            textposition="top center",
         )
     )
     fig.add_trace(
@@ -95,13 +93,43 @@ def production_type_daily_trend(
             x=grouped["date"],
             y=grouped["weighted_repair_ratio_incl_skelp"],
             name="Repair Ratio incl. Skelp",
-            mode="lines+markers+text",
+            mode="lines+markers",
             line={"color": "#dc2626", "width": 4},
             marker={"size": 9},
-            text=ratio_incl_labels,
-            textposition="bottom center",
         )
     )
+    for date_value, ratio_value, label in zip(grouped["date"], grouped["weighted_repair_ratio"], ratio_labels):
+        if label:
+            fig.add_annotation(
+                x=date_value,
+                y=ratio_value,
+                text=label,
+                showarrow=False,
+                yshift=18,
+                font={"color": "#2563eb", "size": 12},
+                bgcolor="rgba(255,255,255,0.86)",
+                bordercolor="#2563eb",
+                borderwidth=1,
+                borderpad=2,
+            )
+    for date_value, ratio_value, label in zip(
+        grouped["date"],
+        grouped["weighted_repair_ratio_incl_skelp"],
+        ratio_incl_labels,
+    ):
+        if label:
+            fig.add_annotation(
+                x=date_value,
+                y=ratio_value,
+                text=label,
+                showarrow=False,
+                yshift=-24,
+                font={"color": "#dc2626", "size": 12},
+                bgcolor="rgba(255,255,255,0.86)",
+                bordercolor="#dc2626",
+                borderwidth=1,
+                borderpad=2,
+            )
     if not grouped.empty:
         latest = grouped.iloc[-1]
         fig.add_trace(
