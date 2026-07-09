@@ -856,7 +856,7 @@ with st.sidebar:
     view_mode = st.radio(
         "Mode",
         ["Presentation Mode", "Tabbed Dashboard", "Classic Dashboard"],
-        index=1,
+        index=2,
     )
     display_unit = st.radio(
         "Unit",
@@ -1048,14 +1048,11 @@ if view_mode == "Presentation Mode":
             st.caption(f"{len(selected_in_progress)} selected projects are currently In Progress.")
 
     st.subheader("Overall Daily Repair Ratio Trend by Production Type")
-    presentation_overall_trend_df, presentation_trend_dates = render_trend_window_control(filtered_to_selected_date)
+    presentation_overall_trend_df, _ = render_trend_window_control(filtered_to_selected_date)
     render_production_type_trends(presentation_overall_trend_df, baseline_for_filtered)
 
     st.subheader("Repair Amount Trend")
-    presentation_trend_df = presentation_history_df[
-        presentation_history_df["date"].dt.date.isin(presentation_trend_dates)
-    ].copy()
-    st.plotly_chart(cached_chart_repair_amount_trend(presentation_trend_df, display_unit), use_container_width=True)
+    st.plotly_chart(cached_chart_repair_amount_trend(presentation_overall_trend_df, display_unit), use_container_width=True)
 
     left, right = st.columns(2)
     with left:
