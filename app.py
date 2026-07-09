@@ -191,6 +191,15 @@ def cached_chart_overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame
 
 
 @st.cache_data(show_spinner=False, max_entries=128)
+def cached_chart_production_type_daily_trend(
+    df: pd.DataFrame,
+    production_type: str,
+    baseline_df: pd.DataFrame,
+):
+    return charts.production_type_daily_trend(df, production_type, baseline_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=128)
 def cached_chart_repair_amount_trend(df: pd.DataFrame, display_unit: str):
     return charts.repair_amount_trend(df, display_unit)
 
@@ -774,11 +783,41 @@ if st.session_state.pdf_report:
         mime="application/pdf",
     )
 
-st.plotly_chart(cached_chart_overall_daily_trend(filtered_to_selected_date, baseline_for_filtered), use_container_width=True)
+st.subheader("Daily Repair Ratio Trend by Production Type")
+trend_types = [
+    production_type
+    for production_type in ["Coil", "Plate"]
+    if production_type in set(filtered_to_selected_date["production_type"].dropna().astype(str))
+]
+if not trend_types:
+    trend_types = sorted(filtered_to_selected_date["production_type"].dropna().astype(str).unique().tolist())
+
+if len(trend_types) <= 1:
+    for production_type in trend_types:
+        st.plotly_chart(
+            cached_chart_production_type_daily_trend(
+                filtered_to_selected_date,
+                production_type,
+                baseline_for_filtered,
+            ),
+            use_container_width=True,
+        )
+else:
+    trend_columns = st.columns(len(trend_types))
+    for column, production_type in zip(trend_columns, trend_types):
+        with column:
+            st.plotly_chart(
+                cached_chart_production_type_daily_trend(
+                    filtered_to_selected_date,
+                    production_type,
+                    baseline_for_filtered,
+                ),
+                use_container_width=True,
+            )
 if baseline_for_filtered.empty:
     st.caption("Historical baseline is not loaded.")
 else:
-    st.caption(f"Historical baseline included in overall weighted ratios: {len(baseline_for_filtered)} projects")
+    st.caption(f"Historical baseline included in production-type weighted ratios: {len(baseline_for_filtered)} projects")
 
 st.plotly_chart(cached_chart_repair_amount_trend(filtered_to_selected_date, display_unit), use_container_width=True)
 

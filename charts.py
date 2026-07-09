@@ -9,6 +9,7 @@ from calculations import (
     amount_in_display_unit,
     apply_meter_based_repair_ratios,
     daily_weighted_repair_ratios,
+    daily_weighted_repair_ratios_for_type,
     repair_amount_trend_data,
     unit_label,
 )
@@ -51,6 +52,49 @@ def overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame | None = Non
     )
     fig.update_layout(title="Overall Daily Repair Ratio Trend", xaxis_title="Date", yaxis_title="Weighted Ratio")
     fig.update_xaxes(tickformat="%Y-%m-%d")
+    return _pct_axis(fig)
+
+
+def production_type_daily_trend(
+    df: pd.DataFrame,
+    production_type: str,
+    baseline_df: pd.DataFrame | None = None,
+):
+    grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=grouped["date"],
+            y=grouped["weighted_repair_ratio"],
+            name="Repair Ratio",
+            mode="lines+markers+text",
+            line={"color": "#2563eb", "width": 4},
+            marker={"size": 9},
+            text=grouped["weighted_repair_ratio"].map(lambda value: f"{value:.2%}"),
+            textposition="top center",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=grouped["date"],
+            y=grouped["weighted_repair_ratio_incl_skelp"],
+            name="Repair Ratio incl. Skelp",
+            mode="lines+markers+text",
+            line={"color": "#dc2626", "width": 4},
+            marker={"size": 9},
+            text=grouped["weighted_repair_ratio_incl_skelp"].map(lambda value: f"{value:.2%}"),
+            textposition="bottom center",
+        )
+    )
+    fig.update_layout(
+        title=f"{production_type} Daily Repair Ratio Trend",
+        xaxis_title="Date",
+        yaxis_title="Weighted Ratio",
+        legend_title_text="",
+        hovermode="x unified",
+    )
+    fig.update_xaxes(tickformat="%Y-%m-%d")
+    fig.update_traces(hovertemplate="%{fullData.name}: %{y:.2%}<extra></extra>")
     return _pct_axis(fig)
 
 

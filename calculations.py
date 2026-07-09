@@ -73,6 +73,26 @@ def daily_weighted_repair_ratios(df: pd.DataFrame, baseline_df: pd.DataFrame | N
     return grouped
 
 
+def daily_weighted_repair_ratios_for_type(
+    df: pd.DataFrame,
+    production_type: str,
+    baseline_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    data = df.copy()
+    if "production_type" not in data.columns:
+        data["production_type"] = "Coil"
+    type_data = data[data["production_type"].astype(str).eq(str(production_type))].copy()
+
+    type_baseline = pd.DataFrame()
+    if baseline_df is not None and not baseline_df.empty:
+        type_baseline = baseline_df.copy()
+        if "production_type" not in type_baseline.columns:
+            type_baseline["production_type"] = "Coil"
+        type_baseline = type_baseline[type_baseline["production_type"].astype(str).eq(str(production_type))]
+
+    return daily_weighted_repair_ratios(type_data, type_baseline)
+
+
 def repair_amount_trend_data(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
     """Build repair amount trend data with non-negative daily increments.
 

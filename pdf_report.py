@@ -19,6 +19,7 @@ from calculations import (
     amount_in_display_unit,
     apply_meter_based_repair_ratios,
     daily_weighted_repair_ratios,
+    daily_weighted_repair_ratios_for_type,
     length_in_display_unit,
     repair_amount_trend_data,
     unit_label,
@@ -143,6 +144,42 @@ def _worst_projects_chart(df: pd.DataFrame, selected_date):
     ax.xaxis.set_major_formatter(lambda value, _: f"{value:.2%}")
     _style_axes(ax, "Worst Projects Today")
     ax.tick_params(axis="y", labelsize=7.4)
+    return _figure_to_image(fig)
+
+
+def _production_type_trend_chart(
+    df: pd.DataFrame,
+    production_type: str,
+    baseline_df: pd.DataFrame | None = None,
+):
+    grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    if not grouped.empty:
+        ax.plot(
+            grouped["date"],
+            grouped["weighted_repair_ratio"],
+            color="#2563eb",
+            linewidth=3.0,
+            marker="o",
+            markersize=6.5,
+            label="Repair Ratio",
+        )
+        ax.plot(
+            grouped["date"],
+            grouped["weighted_repair_ratio_incl_skelp"],
+            color="#dc2626",
+            linewidth=3.0,
+            marker="o",
+            markersize=6.5,
+            label="Repair Ratio incl. Skelp",
+        )
+        _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], _pct, "#2563eb", 8)
+        _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], _pct, "#dc2626", -14)
+        max_value = grouped[["weighted_repair_ratio", "weighted_repair_ratio_incl_skelp"]].max().max()
+        ax.set_ylim(0, max_value * 1.28 if max_value else 1)
+    _style_axes(ax, f"{production_type} Daily Repair Ratio Trend", y_percent=True)
+    ax.legend(fontsize=7, loc="best")
+    fig.autofmt_xdate(rotation=20)
     return _figure_to_image(fig)
 
 
@@ -486,11 +523,11 @@ def build_a3_pdf_report(
     chart_grid = Table(
         [
             [
-                _overall_chart(df, baseline_df),
-                _worst_projects_chart(df, report_date),
+                _production_type_trend_chart(df, "Coil", baseline_df),
+                _production_type_trend_chart(df, "Plate", baseline_df),
             ],
             [
-                _production_type_chart(daily, baseline_df),
+                _worst_projects_chart(df, report_date),
                 _amount_chart(df, display_unit),
             ],
         ],
