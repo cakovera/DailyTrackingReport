@@ -716,6 +716,8 @@ available_dates = sorted(filtered["date"].dt.date.unique())
 selected_date = st.selectbox("Date", available_dates, index=len(available_dates) - 1)
 selected_date_df = filtered[filtered["date"].dt.date == selected_date].copy()
 filtered_to_selected_date = filtered[filtered["date"].dt.date <= selected_date].copy()
+trend_available_dates = sorted(filtered_to_selected_date["date"].dt.date.unique())
+trend_window_size = min(20, len(trend_available_dates))
 baseline_for_filtered = baseline_master_df.copy()
 if not baseline_for_filtered.empty:
     baseline_type_filter = selected_production_type or type_options
@@ -784,19 +786,41 @@ if st.session_state.pdf_report:
     )
 
 st.subheader("Daily Repair Ratio Trend by Production Type")
+trend_default_start_index = max(len(trend_available_dates) - trend_window_size, 0)
+trend_start_index = trend_default_start_index
+if len(trend_available_dates) > trend_window_size:
+    trend_start_options = trend_available_dates[: len(trend_available_dates) - trend_window_size + 1]
+    trend_start_date = st.select_slider(
+        "Daily trend window start",
+        options=trend_start_options,
+        value=trend_start_options[trend_default_start_index],
+        format_func=lambda value: value.strftime("%Y-%m-%d"),
+    )
+    trend_start_index = trend_available_dates.index(trend_start_date)
+trend_end_index = min(trend_start_index + trend_window_size, len(trend_available_dates))
+trend_window_dates = trend_available_dates[trend_start_index:trend_end_index]
+trend_filtered_to_selected_date = filtered_to_selected_date[
+    filtered_to_selected_date["date"].dt.date.isin(trend_window_dates)
+].copy()
+if trend_window_dates:
+    st.caption(
+        "Showing "
+        f"{trend_window_dates[0].strftime('%Y-%m-%d')} to {trend_window_dates[-1].strftime('%Y-%m-%d')} "
+        f"({len(trend_window_dates)} report days)."
+    )
 trend_types = [
     production_type
     for production_type in ["Coil", "Plate"]
-    if production_type in set(filtered_to_selected_date["production_type"].dropna().astype(str))
+    if production_type in set(trend_filtered_to_selected_date["production_type"].dropna().astype(str))
 ]
 if not trend_types:
-    trend_types = sorted(filtered_to_selected_date["production_type"].dropna().astype(str).unique().tolist())
+    trend_types = sorted(trend_filtered_to_selected_date["production_type"].dropna().astype(str).unique().tolist())
 
 if len(trend_types) <= 1:
     for production_type in trend_types:
         st.plotly_chart(
             cached_chart_production_type_daily_trend(
-                filtered_to_selected_date,
+                trend_filtered_to_selected_date,
                 production_type,
                 baseline_for_filtered,
             ),
@@ -808,7 +832,7 @@ else:
         with column:
             st.plotly_chart(
                 cached_chart_production_type_daily_trend(
-                    filtered_to_selected_date,
+                    trend_filtered_to_selected_date,
                     production_type,
                     baseline_for_filtered,
                 ),
