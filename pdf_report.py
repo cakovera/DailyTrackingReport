@@ -73,7 +73,10 @@ def _add_point_labels(ax, x_values, y_values, formatter, color: str, y_offset: i
 
 def _label_every_third_and_last(values) -> list[bool]:
     values = list(values)
-    return [(index % 3 == 0) or (index == len(values) - 1) for index in range(len(values))]
+    labels = [(index % 3 == 0) or (index == len(values) - 1) for index in range(len(values))]
+    if len(values) >= 2 and labels[-2]:
+        labels[-2] = False
+    return labels
 
 
 def _add_selected_point_labels(ax, x_values, y_values, mask, formatter, color: str, y_offset: int) -> None:

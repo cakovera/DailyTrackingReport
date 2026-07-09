@@ -22,6 +22,13 @@ STATUS_COLORS = {
 DAILY_REPAIR_VISUAL_SCALE = 100
 
 
+def _label_every_third_and_last(length: int) -> list[bool]:
+    labels = [(index % 3 == 0) or (index == length - 1) for index in range(length)]
+    if length >= 2 and labels[-2]:
+        labels[-2] = False
+    return labels
+
+
 def _pct_axis(fig):
     fig.update_yaxes(tickformat=".2%")
     return fig
@@ -61,7 +68,7 @@ def production_type_daily_trend(
     baseline_df: pd.DataFrame | None = None,
 ):
     grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
-    label_mask = [(index % 3 == 0) or (index == len(grouped) - 1) for index in range(len(grouped))]
+    label_mask = _label_every_third_and_last(len(grouped))
     ratio_labels = [
         f"{value:.2%}" if show_label else ""
         for value, show_label in zip(grouped["weighted_repair_ratio"], label_mask)
