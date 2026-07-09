@@ -554,6 +554,177 @@ def apply_project_saved_groups(
     return pd.concat(frames, ignore_index=True), warnings
 
 
+def weighted_repair_ratio_for_rows(df: pd.DataFrame) -> float:
+    if df.empty:
+        return 0.0
+    denominator_m = df["repaired_spiral_length"].sum() * METERS_PER_FOOT
+    return float(df["total_repair_amount"].sum() / denominator_m) if denominator_m else 0.0
+
+
+def production_type_summary_rows(
+    filtered_df: pd.DataFrame,
+    selected_date,
+    selected_date_df: pd.DataFrame,
+) -> list[dict[str, object]]:
+    previous_dates = sorted(date for date in filtered_df["date"].dt.date.unique() if date < selected_date)
+    previous_date = previous_dates[-1] if previous_dates else None
+    previous_df = (
+        filtered_df[filtered_df["date"].dt.date.eq(previous_date)].copy()
+        if previous_date is not None
+        else pd.DataFrame()
+    )
+    rows: list[dict[str, object]] = []
+    production_types = [
+        production_type
+        for production_type in ["Coil", "Plate"]
+        if production_type in set(selected_date_df["production_type"].dropna().astype(str))
+    ]
+    if not production_types:
+        production_types = sorted(selected_date_df["production_type"].dropna().astype(str).unique().tolist())
+    for production_type in production_types:
+        current = selected_date_df[selected_date_df["production_type"].astype(str).eq(production_type)]
+        previous = previous_df[previous_df["production_type"].astype(str).eq(production_type)] if not previous_df.empty else pd.DataFrame()
+        current_ratio = weighted_repair_ratio_for_rows(current)
+        previous_ratio = weighted_repair_ratio_for_rows(previous)
+        rows.append(
+            {
+                "production_type": production_type,
+                "current_ratio": current_ratio,
+                "delta": current_ratio - previous_ratio if previous_date is not None else None,
+                "project_count": int(len(current)),
+            }
+        )
+    return rows
+
+
+def render_executive_summary(
+    selected_date,
+    selected_date_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    display_unit: str,
+) -> None:
+    in_progress = selected_date_df[selected_date_df["project_status"].eq("In Progress")].copy()
+    completed = selected_date_df[selected_date_df["project_status"].eq("Completed")].copy()
+    summary_rows = production_type_summary_rows(filtered_df, selected_date, selected_date_df)
+    unit = unit_label(display_unit)
+
+    st.subheader("Executive Summary")
+    metric_columns = st.columns(max(4 + len(summary_rows), 4))
+    metric_columns[0].metric("Report Date", str(selected_date))
+    metric_columns[1].metric("In Progress Projects", f"{len(in_progress):,}")
+    metric_columns[2].metric("Completed Rows", f"{len(completed):,}")
+    total_repair = amount_in_display_unit(selected_date_df["total_repair_amount"].sum(), display_unit)
+    metric_columns[3].metric("Daily Repair Amount", f"{total_repair:,.2f} {unit}")
+
+    for index, row in enumerate(summary_rows, start=4):
+        if index >= len(metric_columns):
+            break
+        delta = row["delta"]
+        metric_columns[index].metric(
+            f"{row['production_type']} Ratio",
+            f"{row['current_ratio']:.2%}",
+            None if delta is None else f"{delta:+.2%}",
+        )
+
+    bullets: list[str] = []
+    if not in_progress.empty:
+        worst_active = in_progress.nlargest(1, "repair_ratio").iloc[0]
+        bullets.append(
+            "Highest in-progress repair ratio: "
+            f"{worst_active['project_no']} / {worst_active['dimensions']} "
+            f"at {worst_active['repair_ratio']:.2%}."
+        )
+    if summary_rows:
+        biggest_move = max(summary_rows, key=lambda row: abs(row["delta"] or 0))
+        if biggest_move["delta"] is not None:
+            bullets.append(
+                f"{biggest_move['production_type']} moved {biggest_move['delta']:+.2%} versus previous report day."
+            )
+    if bullets:
+        for bullet in bullets:
+            st.info(bullet)
+
+
+def format_active_projects(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
+    unit = unit_label(display_unit)
+    columns = [
+        "production_type",
+        "project_no",
+        "dimensions",
+        "qty",
+        "total_repair_amount",
+        "total_repair_amount_incl_skelp",
+        "repair_ratio",
+        "repair_ratio_incl_skelp",
+    ]
+    out = df[columns].copy()
+    out["total_repair_amount"] = amount_in_display_unit(out["total_repair_amount"], display_unit)
+    out["total_repair_amount_incl_skelp"] = amount_in_display_unit(out["total_repair_amount_incl_skelp"], display_unit)
+    return out.rename(
+        columns={
+            "production_type": "Type",
+            "project_no": "Project",
+            "dimensions": "Dimension",
+            "qty": "Qty",
+            "total_repair_amount": f"Repair Amount ({unit})",
+            "total_repair_amount_incl_skelp": f"Repair Amount incl. Skelp ({unit})",
+            "repair_ratio": "Repair Ratio",
+            "repair_ratio_incl_skelp": "Repair Ratio incl. Skelp",
+        }
+    )
+
+
+def render_trend_window_control(filtered_to_selected_date: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    trend_available_dates = sorted(filtered_to_selected_date["date"].dt.date.unique())
+    trend_window_size = min(20, len(trend_available_dates))
+    trend_default_start_index = max(len(trend_available_dates) - trend_window_size, 0)
+    trend_start_index = trend_default_start_index
+    if len(trend_available_dates) > trend_window_size:
+        trend_start_options = trend_available_dates[: len(trend_available_dates) - trend_window_size + 1]
+        trend_start_date = st.select_slider(
+            "Trend window start",
+            options=trend_start_options,
+            value=trend_start_options[trend_default_start_index],
+            format_func=lambda value: value.strftime("%Y-%m-%d"),
+            help="Controls both daily repair ratio trends and repair amount trend.",
+        )
+        trend_start_index = trend_available_dates.index(trend_start_date)
+    trend_end_index = min(trend_start_index + trend_window_size, len(trend_available_dates))
+    trend_window_dates = trend_available_dates[trend_start_index:trend_end_index]
+    trend_df = filtered_to_selected_date[filtered_to_selected_date["date"].dt.date.isin(trend_window_dates)].copy()
+    if trend_window_dates:
+        st.caption(
+            "Showing "
+            f"{trend_window_dates[0].strftime('%Y-%m-%d')} to {trend_window_dates[-1].strftime('%Y-%m-%d')} "
+            f"({len(trend_window_dates)} report days)."
+        )
+    return trend_df, trend_window_dates
+
+
+def render_production_type_trends(trend_df: pd.DataFrame, baseline_for_filtered: pd.DataFrame) -> None:
+    trend_types = [
+        production_type
+        for production_type in ["Coil", "Plate"]
+        if production_type in set(trend_df["production_type"].dropna().astype(str))
+    ]
+    if not trend_types:
+        trend_types = sorted(trend_df["production_type"].dropna().astype(str).unique().tolist())
+    if len(trend_types) <= 1:
+        for production_type in trend_types:
+            st.plotly_chart(
+                cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
+                use_container_width=True,
+            )
+    else:
+        trend_columns = st.columns(len(trend_types))
+        for column, production_type in zip(trend_columns, trend_types):
+            with column:
+                st.plotly_chart(
+                    cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
+                    use_container_width=True,
+                )
+
+
 with st.sidebar:
     st.header("Import")
     uploaded = st.file_uploader("Daily Activity Excel", type=["xlsx"])
@@ -567,6 +738,11 @@ with st.sidebar:
         st.rerun()
     st.divider()
     st.header("Display")
+    view_mode = st.radio(
+        "Mode",
+        ["Presentation Mode", "Tabbed Dashboard", "Classic Dashboard"],
+        index=1,
+    )
     display_unit = st.radio(
         "Unit",
         ["m", "ft"],
@@ -716,8 +892,6 @@ available_dates = sorted(filtered["date"].dt.date.unique())
 selected_date = st.selectbox("Date", available_dates, index=len(available_dates) - 1)
 selected_date_df = filtered[filtered["date"].dt.date == selected_date].copy()
 filtered_to_selected_date = filtered[filtered["date"].dt.date <= selected_date].copy()
-trend_available_dates = sorted(filtered_to_selected_date["date"].dt.date.unique())
-trend_window_size = min(20, len(trend_available_dates))
 baseline_for_filtered = baseline_master_df.copy()
 if not baseline_for_filtered.empty:
     baseline_type_filter = selected_production_type or type_options
@@ -732,6 +906,156 @@ except Exception as exc:
     st.warning("Pipe-level data could not be loaded for the selected date.")
     st.code(str(exc), language="text")
     selected_pipe_df = pd.DataFrame()
+
+if view_mode == "Presentation Mode":
+    render_executive_summary(selected_date, selected_date_df, filtered, display_unit)
+
+    active_projects = selected_date_df[selected_date_df["project_status"].eq("In Progress")].copy()
+    st.subheader("In-Progress Projects")
+    if active_projects.empty:
+        st.info("No in-progress projects for the selected date.")
+    else:
+        active_projects = active_projects.sort_values("repair_ratio", ascending=False)
+        st.dataframe(
+            format_active_projects(active_projects, display_unit).style.format(
+                {
+                    "Qty": "{:,.0f}",
+                    f"Repair Amount ({unit_label(display_unit)})": "{:,.2f}",
+                    f"Repair Amount incl. Skelp ({unit_label(display_unit)})": "{:,.2f}",
+                    "Repair Ratio": "{:.2%}",
+                    "Repair Ratio incl. Skelp": "{:.2%}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.subheader("Daily Repair Ratio Trend by Production Type")
+    presentation_trend_df, _ = render_trend_window_control(filtered_to_selected_date)
+    render_production_type_trends(presentation_trend_df, baseline_for_filtered)
+
+    st.subheader("Repair Amount Trend")
+    st.plotly_chart(cached_chart_repair_amount_trend(presentation_trend_df, display_unit), use_container_width=True)
+
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(cached_chart_worst_projects_today(selected_date_df, selected_date), use_container_width=True)
+    with right:
+        st.plotly_chart(cached_chart_dimension_analysis(selected_date_df), use_container_width=True)
+    st.stop()
+
+if view_mode == "Tabbed Dashboard":
+    overview_tab, project_tab, dimension_tab, data_tab = st.tabs(
+        ["Overview", "Project Deep Dive", "Dimension Analysis", "Data / Admin"]
+    )
+
+    with overview_tab:
+        render_executive_summary(selected_date, selected_date_df, filtered, display_unit)
+        st.subheader("Daily Repair Ratio Trend by Production Type")
+        tab_trend_df, _ = render_trend_window_control(filtered_to_selected_date)
+        render_production_type_trends(tab_trend_df, baseline_for_filtered)
+        st.subheader("Repair Amount Trend")
+        st.plotly_chart(cached_chart_repair_amount_trend(tab_trend_df, display_unit), use_container_width=True)
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(cached_chart_worst_projects_today(selected_date_df, selected_date), use_container_width=True)
+        with right:
+            st.plotly_chart(cached_chart_production_type_analysis(selected_date_df, baseline_for_filtered), use_container_width=True)
+
+    with project_tab:
+        active_projects = selected_date_df[selected_date_df["project_status"].eq("In Progress")].copy()
+        st.subheader("In-Progress Projects")
+        if active_projects.empty:
+            st.info("No in-progress projects for the selected date.")
+        else:
+            st.dataframe(
+                format_active_projects(active_projects.sort_values("repair_ratio", ascending=False), display_unit).style.format(
+                    {
+                        "Qty": "{:,.0f}",
+                        f"Repair Amount ({unit_label(display_unit)})": "{:,.2f}",
+                        f"Repair Amount incl. Skelp ({unit_label(display_unit)})": "{:,.2f}",
+                        "Repair Ratio": "{:.2%}",
+                        "Repair Ratio incl. Skelp": "{:.2%}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        projects = sorted(selected_date_df["project_no"].unique())
+        selected_project_deep_dive = st.selectbox("Project", projects, key="tab_project_deep_dive")
+        st.plotly_chart(
+            cached_chart_project_trend(filtered_to_selected_date, selected_project_deep_dive),
+            use_container_width=True,
+        )
+        project_rows = selected_date_df[selected_date_df["project_no"].eq(selected_project_deep_dive)].copy()
+        st.dataframe(format_preview(project_rows, display_unit), use_container_width=True, hide_index=True)
+
+    with dimension_tab:
+        left, right = st.columns(2)
+        with left:
+            st.plotly_chart(cached_chart_dimension_analysis(selected_date_df), use_container_width=True)
+        with right:
+            st.plotly_chart(cached_chart_skelp_impact_analysis(selected_date_df, display_unit), use_container_width=True)
+        dimension_rows = (
+            selected_date_df.groupby(["production_type", "dimensions"], as_index=False)
+            .agg(
+                projects=("project_no", "count"),
+                repair_amount=("total_repair_amount", "sum"),
+                repaired_spiral_length=("repaired_spiral_length", "sum"),
+            )
+            .sort_values("repair_amount", ascending=False)
+        )
+        denominator_m = dimension_rows["repaired_spiral_length"] * METERS_PER_FOOT
+        dimension_rows["weighted_repair_ratio"] = (dimension_rows["repair_amount"] / denominator_m.where(denominator_m != 0)).fillna(0)
+        dimension_rows["repair_amount"] = amount_in_display_unit(dimension_rows["repair_amount"], display_unit)
+        st.dataframe(
+            dimension_rows.rename(
+                columns={
+                    "production_type": "Type",
+                    "dimensions": "Dimension",
+                    "projects": "Rows",
+                    "repair_amount": f"Repair Amount ({unit_label(display_unit)})",
+                    "weighted_repair_ratio": "Weighted Repair Ratio",
+                }
+            ).style.format(
+                {
+                    "Rows": "{:,.0f}",
+                    f"Repair Amount ({unit_label(display_unit)})": "{:,.2f}",
+                    "Weighted Repair Ratio": "{:.2%}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with data_tab:
+        st.download_button(
+            "Download Selected Date CSV",
+            data=format_preview(selected_date_df, display_unit).to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"daily_repair_rate_archive_{selected_date}_{display_unit}.csv",
+            mime="text/csv",
+        )
+        if st.button("Generate Selected Date A3 PDF Report", key="tab_generate_a3_pdf"):
+            with st.spinner("A3 PDF report hazirlaniyor..."):
+                st.session_state.pdf_report = build_a3_pdf_report(
+                    filtered_to_selected_date,
+                    selected_date,
+                    selected_status,
+                    baseline_for_filtered,
+                    display_unit,
+                )
+                st.session_state.pdf_report_name = f"daily_repair_rate_report_{selected_date}.pdf"
+        if st.session_state.pdf_report:
+            st.download_button(
+                "Download Selected Date A3 PDF Report",
+                data=st.session_state.pdf_report,
+                file_name=st.session_state.pdf_report_name,
+                mime="application/pdf",
+                key="tab_download_a3_pdf",
+            )
+        with st.expander("Master data"):
+            st.dataframe(format_preview(filtered, display_unit), use_container_width=True)
+    st.stop()
 
 if "production_type" in selected_date_df.columns and not selected_date_df.empty:
     st.subheader("Production Type KPIs")
@@ -786,59 +1110,8 @@ if st.session_state.pdf_report:
     )
 
 st.subheader("Daily Repair Ratio Trend by Production Type")
-trend_default_start_index = max(len(trend_available_dates) - trend_window_size, 0)
-trend_start_index = trend_default_start_index
-if len(trend_available_dates) > trend_window_size:
-    trend_start_options = trend_available_dates[: len(trend_available_dates) - trend_window_size + 1]
-    trend_start_date = st.select_slider(
-        "Trend window start",
-        options=trend_start_options,
-        value=trend_start_options[trend_default_start_index],
-        format_func=lambda value: value.strftime("%Y-%m-%d"),
-        help="Controls both daily repair ratio trends and repair amount trend.",
-    )
-    trend_start_index = trend_available_dates.index(trend_start_date)
-trend_end_index = min(trend_start_index + trend_window_size, len(trend_available_dates))
-trend_window_dates = trend_available_dates[trend_start_index:trend_end_index]
-trend_filtered_to_selected_date = filtered_to_selected_date[
-    filtered_to_selected_date["date"].dt.date.isin(trend_window_dates)
-].copy()
-if trend_window_dates:
-    st.caption(
-        "Showing "
-        f"{trend_window_dates[0].strftime('%Y-%m-%d')} to {trend_window_dates[-1].strftime('%Y-%m-%d')} "
-        f"({len(trend_window_dates)} report days)."
-    )
-trend_types = [
-    production_type
-    for production_type in ["Coil", "Plate"]
-    if production_type in set(trend_filtered_to_selected_date["production_type"].dropna().astype(str))
-]
-if not trend_types:
-    trend_types = sorted(trend_filtered_to_selected_date["production_type"].dropna().astype(str).unique().tolist())
-
-if len(trend_types) <= 1:
-    for production_type in trend_types:
-        st.plotly_chart(
-            cached_chart_production_type_daily_trend(
-                trend_filtered_to_selected_date,
-                production_type,
-                baseline_for_filtered,
-            ),
-            use_container_width=True,
-        )
-else:
-    trend_columns = st.columns(len(trend_types))
-    for column, production_type in zip(trend_columns, trend_types):
-        with column:
-            st.plotly_chart(
-                cached_chart_production_type_daily_trend(
-                    trend_filtered_to_selected_date,
-                    production_type,
-                    baseline_for_filtered,
-                ),
-                use_container_width=True,
-            )
+trend_filtered_to_selected_date, _ = render_trend_window_control(filtered_to_selected_date)
+render_production_type_trends(trend_filtered_to_selected_date, baseline_for_filtered)
 if baseline_for_filtered.empty:
     st.caption("Historical baseline is not loaded.")
 else:
