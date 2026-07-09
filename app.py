@@ -649,6 +649,7 @@ def format_active_projects(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
     unit = unit_label(display_unit)
     columns = [
         "production_type",
+        "project_status",
         "project_no",
         "dimensions",
         "qty",
@@ -663,6 +664,7 @@ def format_active_projects(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
     return out.rename(
         columns={
             "production_type": "Type",
+            "project_status": "Status",
             "project_no": "Project",
             "dimensions": "Dimension",
             "qty": "Qty",
@@ -671,6 +673,61 @@ def format_active_projects(df: pd.DataFrame, display_unit: str) -> pd.DataFrame:
             "repair_ratio": "Repair Ratio",
             "repair_ratio_incl_skelp": "Repair Ratio incl. Skelp",
         }
+    )
+
+
+def project_selection_key(row) -> str:
+    return f"{row['production_type']}||{row['project_no']}||{row['dimensions']}"
+
+
+def project_selection_label(row) -> str:
+    return f"{row['production_type']} | {row['project_no']} | {row['dimensions']}"
+
+
+def add_selection_key(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        out["_selection_key"] = []
+        return out
+    out["_selection_key"] = (
+        out["production_type"].astype(str)
+        + "||"
+        + out["project_no"].astype(str)
+        + "||"
+        + out["dimensions"].astype(str)
+    )
+    return out
+
+
+def render_presentation_project_selector(
+    selected_date_df: pd.DataFrame,
+    filtered_to_selected_date: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    current = add_selection_key(selected_date_df)
+    history = add_selection_key(filtered_to_selected_date)
+    options = current["_selection_key"].tolist()
+    labels = {
+        row["_selection_key"]: project_selection_label(row)
+        for _, row in current.iterrows()
+    }
+    default_keys = current.loc[current["project_status"].eq("In Progress"), "_selection_key"].tolist()
+    if not default_keys:
+        default_keys = options
+
+    selected_keys = st.multiselect(
+        "Projects for presentation",
+        options=options,
+        default=default_keys,
+        format_func=lambda key: labels.get(key, key),
+        help="Default selection is the projects currently In Progress on the selected date.",
+    )
+    if not selected_keys:
+        st.warning("Select at least one project to build the presentation view.")
+        return current.iloc[0:0].copy(), history.iloc[0:0].copy()
+
+    return (
+        current[current["_selection_key"].isin(selected_keys)].drop(columns=["_selection_key"], errors="ignore").copy(),
+        history[history["_selection_key"].isin(selected_keys)].drop(columns=["_selection_key"], errors="ignore").copy(),
     )
 
 
@@ -908,16 +965,22 @@ except Exception as exc:
     selected_pipe_df = pd.DataFrame()
 
 if view_mode == "Presentation Mode":
-    render_executive_summary(selected_date, selected_date_df, filtered, display_unit)
+    presentation_date_df, presentation_history_df = render_presentation_project_selector(
+        selected_date_df,
+        filtered_to_selected_date,
+    )
+    if presentation_date_df.empty:
+        st.stop()
 
-    active_projects = selected_date_df[selected_date_df["project_status"].eq("In Progress")].copy()
-    st.subheader("In-Progress Projects")
-    if active_projects.empty:
-        st.info("No in-progress projects for the selected date.")
+    render_executive_summary(selected_date, presentation_date_df, presentation_history_df, display_unit)
+
+    selected_in_progress = presentation_date_df[presentation_date_df["project_status"].eq("In Progress")].copy()
+    st.subheader("Selected Projects")
+    if presentation_date_df.empty:
+        st.info("No selected projects for the selected date.")
     else:
-        active_projects = active_projects.sort_values("repair_ratio", ascending=False)
         st.dataframe(
-            format_active_projects(active_projects, display_unit).style.format(
+            format_active_projects(presentation_date_df.sort_values("repair_ratio", ascending=False), display_unit).style.format(
                 {
                     "Qty": "{:,.0f}",
                     f"Repair Amount ({unit_label(display_unit)})": "{:,.2f}",
@@ -929,19 +992,21 @@ if view_mode == "Presentation Mode":
             use_container_width=True,
             hide_index=True,
         )
+        if not selected_in_progress.empty:
+            st.caption(f"{len(selected_in_progress)} selected projects are currently In Progress.")
 
     st.subheader("Daily Repair Ratio Trend by Production Type")
-    presentation_trend_df, _ = render_trend_window_control(filtered_to_selected_date)
-    render_production_type_trends(presentation_trend_df, baseline_for_filtered)
+    presentation_trend_df, _ = render_trend_window_control(presentation_history_df)
+    render_production_type_trends(presentation_trend_df, pd.DataFrame())
 
     st.subheader("Repair Amount Trend")
     st.plotly_chart(cached_chart_repair_amount_trend(presentation_trend_df, display_unit), use_container_width=True)
 
     left, right = st.columns(2)
     with left:
-        st.plotly_chart(cached_chart_worst_projects_today(selected_date_df, selected_date), use_container_width=True)
+        st.plotly_chart(cached_chart_worst_projects_today(presentation_date_df, selected_date), use_container_width=True)
     with right:
-        st.plotly_chart(cached_chart_dimension_analysis(selected_date_df), use_container_width=True)
+        st.plotly_chart(cached_chart_dimension_analysis(presentation_date_df), use_container_width=True)
     st.stop()
 
 if view_mode == "Tabbed Dashboard":
