@@ -61,6 +61,15 @@ def production_type_daily_trend(
     baseline_df: pd.DataFrame | None = None,
 ):
     grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
+    label_mask = [(index % 3 == 0) or (index == len(grouped) - 1) for index in range(len(grouped))]
+    ratio_labels = [
+        f"{value:.2%}" if show_label else ""
+        for value, show_label in zip(grouped["weighted_repair_ratio"], label_mask)
+    ]
+    ratio_incl_labels = [
+        f"{value:.2%}" if show_label else ""
+        for value, show_label in zip(grouped["weighted_repair_ratio_incl_skelp"], label_mask)
+    ]
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -70,7 +79,7 @@ def production_type_daily_trend(
             mode="lines+markers+text",
             line={"color": "#2563eb", "width": 4},
             marker={"size": 9},
-            text=grouped["weighted_repair_ratio"].map(lambda value: f"{value:.2%}"),
+            text=ratio_labels,
             textposition="top center",
         )
     )
@@ -82,10 +91,34 @@ def production_type_daily_trend(
             mode="lines+markers+text",
             line={"color": "#dc2626", "width": 4},
             marker={"size": 9},
-            text=grouped["weighted_repair_ratio_incl_skelp"].map(lambda value: f"{value:.2%}"),
+            text=ratio_incl_labels,
             textposition="bottom center",
         )
     )
+    if not grouped.empty:
+        latest = grouped.iloc[-1]
+        fig.add_trace(
+            go.Scatter(
+                x=[latest["date"]],
+                y=[latest["weighted_repair_ratio"]],
+                name="Latest Repair Ratio",
+                mode="markers",
+                marker={"size": 15, "color": "#facc15", "line": {"color": "#111827", "width": 2}},
+                showlegend=False,
+                hovertemplate="Latest Repair Ratio: %{y:.2%}<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[latest["date"]],
+                y=[latest["weighted_repair_ratio_incl_skelp"]],
+                name="Latest Repair Ratio incl. Skelp",
+                mode="markers",
+                marker={"size": 15, "color": "#fb923c", "line": {"color": "#111827", "width": 2}},
+                showlegend=False,
+                hovertemplate="Latest Repair Ratio incl. Skelp: %{y:.2%}<extra></extra>",
+            )
+        )
     fig.update_layout(
         title=f"{production_type} Daily Repair Ratio Trend",
         xaxis_title="Date",

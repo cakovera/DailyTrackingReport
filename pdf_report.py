@@ -71,6 +71,29 @@ def _add_point_labels(ax, x_values, y_values, formatter, color: str, y_offset: i
         )
 
 
+def _label_every_third_and_last(values) -> list[bool]:
+    values = list(values)
+    return [(index % 3 == 0) or (index == len(values) - 1) for index in range(len(values))]
+
+
+def _add_selected_point_labels(ax, x_values, y_values, mask, formatter, color: str, y_offset: int) -> None:
+    for x_value, y_value, show_label in zip(x_values, y_values, mask):
+        if not show_label or not pd.notna(y_value):
+            continue
+        ax.annotate(
+            formatter(y_value),
+            xy=(x_value, y_value),
+            xytext=(0, y_offset),
+            textcoords="offset points",
+            ha="center",
+            va="bottom" if y_offset >= 0 else "top",
+            fontsize=7.2,
+            color=color,
+            fontweight="bold",
+            bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": color, "lw": 0.45, "alpha": 0.9},
+        )
+
+
 def _table(data, col_widths=None, font_size=8):
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(
@@ -173,8 +196,36 @@ def _production_type_trend_chart(
             markersize=6.5,
             label="Repair Ratio incl. Skelp",
         )
-        _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], _pct, "#2563eb", 8)
-        _add_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio_incl_skelp"], _pct, "#dc2626", -14)
+        label_mask = _label_every_third_and_last(grouped["date"])
+        _add_selected_point_labels(ax, grouped["date"], grouped["weighted_repair_ratio"], label_mask, _pct, "#2563eb", 8)
+        _add_selected_point_labels(
+            ax,
+            grouped["date"],
+            grouped["weighted_repair_ratio_incl_skelp"],
+            label_mask,
+            _pct,
+            "#dc2626",
+            -14,
+        )
+        latest = grouped.iloc[-1]
+        ax.scatter(
+            [latest["date"]],
+            [latest["weighted_repair_ratio"]],
+            s=95,
+            color="#facc15",
+            edgecolors="#111827",
+            linewidths=1.0,
+            zorder=5,
+        )
+        ax.scatter(
+            [latest["date"]],
+            [latest["weighted_repair_ratio_incl_skelp"]],
+            s=95,
+            color="#fb923c",
+            edgecolors="#111827",
+            linewidths=1.0,
+            zorder=5,
+        )
         max_value = grouped[["weighted_repair_ratio", "weighted_repair_ratio_incl_skelp"]].max().max()
         ax.set_ylim(0, max_value * 1.28 if max_value else 1)
     _style_axes(ax, f"{production_type} Daily Repair Ratio Trend", y_percent=True)
