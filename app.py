@@ -838,6 +838,10 @@ def render_production_type_trends(trend_df: pd.DataFrame, baseline_for_filtered:
                     cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
                     use_container_width=True,
                 )
+    st.plotly_chart(
+        cached_chart_overall_daily_trend(trend_df, baseline_for_filtered),
+        use_container_width=True,
+    )
 
 
 with st.sidebar:
