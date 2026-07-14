@@ -34,40 +34,7 @@ def _pct_axis(fig):
     return fig
 
 
-def overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
-    grouped = daily_weighted_repair_ratios(df, baseline_df)
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=grouped["date"],
-            y=grouped["weighted_repair_ratio"],
-            name="Repair Ratio",
-            mode="lines+markers",
-            line={"color": "#2563eb", "width": 4},
-            marker={"size": 9},
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=grouped["date"],
-            y=grouped["weighted_repair_ratio_incl_skelp"],
-            name="Repair Ratio incl. Skelp",
-            mode="lines+markers",
-            line={"color": "#dc2626", "width": 4},
-            marker={"size": 9},
-        )
-    )
-    fig.update_layout(title="Overall Daily Repair Ratio Trend", xaxis_title="Date", yaxis_title="Weighted Ratio")
-    fig.update_xaxes(tickformat="%Y-%m-%d")
-    return _pct_axis(fig)
-
-
-def production_type_daily_trend(
-    df: pd.DataFrame,
-    production_type: str,
-    baseline_df: pd.DataFrame | None = None,
-):
-    grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
+def _daily_repair_ratio_trend_figure(grouped: pd.DataFrame, title: str):
     label_mask = _label_every_third_and_last(len(grouped))
     ratio_labels = [
         f"{value:.2%}" if show_label else ""
@@ -155,7 +122,7 @@ def production_type_daily_trend(
             )
         )
     fig.update_layout(
-        title=f"{production_type} Daily Repair Ratio Trend",
+        title=title,
         xaxis_title="Date",
         yaxis_title="Weighted Ratio",
         legend_title_text="",
@@ -164,6 +131,20 @@ def production_type_daily_trend(
     fig.update_xaxes(tickformat="%Y-%m-%d")
     fig.update_traces(hovertemplate="%{fullData.name}: %{y:.2%}<extra></extra>")
     return _pct_axis(fig)
+
+
+def overall_daily_trend(df: pd.DataFrame, baseline_df: pd.DataFrame | None = None):
+    grouped = daily_weighted_repair_ratios(df, baseline_df)
+    return _daily_repair_ratio_trend_figure(grouped, "Overall Daily Repair Ratio Trend")
+
+
+def production_type_daily_trend(
+    df: pd.DataFrame,
+    production_type: str,
+    baseline_df: pd.DataFrame | None = None,
+):
+    grouped = daily_weighted_repair_ratios_for_type(df, production_type, baseline_df)
+    return _daily_repair_ratio_trend_figure(grouped, f"{production_type} Daily Repair Ratio Trend")
 
 
 def worst_projects_today(df: pd.DataFrame, selected_date):
