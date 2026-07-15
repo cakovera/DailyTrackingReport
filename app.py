@@ -824,20 +824,11 @@ def render_production_type_trends(trend_df: pd.DataFrame, baseline_for_filtered:
     ]
     if not trend_types:
         trend_types = sorted(trend_df["production_type"].dropna().astype(str).unique().tolist())
-    if len(trend_types) <= 1:
-        for production_type in trend_types:
-            st.plotly_chart(
-                cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
-                use_container_width=True,
-            )
-    else:
-        trend_columns = st.columns(len(trend_types))
-        for column, production_type in zip(trend_columns, trend_types):
-            with column:
-                st.plotly_chart(
-                    cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
-                    use_container_width=True,
-                )
+    for production_type in trend_types:
+        st.plotly_chart(
+            cached_chart_production_type_daily_trend(trend_df, production_type, baseline_for_filtered),
+            use_container_width=True,
+        )
     st.plotly_chart(
         cached_chart_overall_daily_trend(trend_df, baseline_for_filtered),
         use_container_width=True,
